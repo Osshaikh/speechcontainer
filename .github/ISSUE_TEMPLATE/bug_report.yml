@@ -1,0 +1,58 @@
+name: Bug report
+description: Report a problem with the speech-container Helm chart
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report. Please fill in as much detail as you can.
+  - type: input
+    id: chart-version
+    attributes:
+      label: Chart version
+      placeholder: "e.g. 1.1.4"
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Kubernetes platform
+      options:
+        - AKS
+        - EKS
+        - GKE
+        - OpenShift
+        - kind / k3d / minikube
+        - Vanilla / kubeadm
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: k8s-version
+    attributes:
+      label: Kubernetes version
+      placeholder: "e.g. 1.30.0 (output of `kubectl version --short`)"
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear and concise description of the bug.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      description: |
+        Include the exact `helm install` command, `helm get values <release>` output (redact secrets), and any logs from `kubectl logs <pod>` / `kubectl describe pod <pod>`.
+      render: shell
+    validations:
+      required: true

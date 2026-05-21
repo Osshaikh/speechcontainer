@@ -1,0 +1,21 @@
+name: Feature request
+description: Suggest a new value, template, or capability for the chart
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What use case is this feature solving? What does the chart not let you do today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What would you like the chart to do? (Optional — a problem statement alone is enough to open the discussion.)
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any workarounds you've tried, or other charts/tools that handle this differently.

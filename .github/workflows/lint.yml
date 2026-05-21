@@ -1,0 +1,59 @@
+name: Lint chart
+
+on:
+  pull_request:
+    paths:
+      - 'charts/**'
+      - '.github/workflows/lint.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'charts/**'
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.14.0
+
+      - name: helm lint
+        run: helm lint charts/speech-container
+
+      - name: helm template (stt-en)
+        run: |
+          helm template test charts/speech-container \
+            -f charts/speech-container/examples/stt-en.yaml \
+            --set secretRef.enabled=true \
+            --set secretRef.name=test \
+            > /dev/null
+
+      - name: helm template (stt-hi)
+        run: |
+          helm template test charts/speech-container \
+            -f charts/speech-container/examples/stt-hi.yaml \
+            --set secretRef.enabled=true \
+            --set secretRef.name=test \
+            > /dev/null
+
+      - name: helm template (tts-en)
+        run: |
+          helm template test charts/speech-container \
+            -f charts/speech-container/examples/tts-en.yaml \
+            --set secretRef.enabled=true \
+            --set secretRef.name=test \
+            > /dev/null
+
+      - name: helm template (tts-hi)
+        run: |
+          helm template test charts/speech-container \
+            -f charts/speech-container/examples/tts-hi.yaml \
+            --set secretRef.enabled=true \
+            --set secretRef.name=test \
+            > /dev/null

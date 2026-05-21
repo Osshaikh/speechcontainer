@@ -1,0 +1,58 @@
+mode: stt
+
+image:
+  tag: 5.3.0-amd64-en-us
+
+# STT minimum sizing per Microsoft Learn host-resource guidance.
+# Request = guaranteed scheduling floor. Limits inherit from chart values.yaml (8c / 16Gi).
+resources:
+  requests:
+    cpu: "4"
+    memory: "4Gi"
+
+concurrency:
+  numberOfConcurrentRequest: 4
+
+replicaCount: 1
+
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 70
+
+service:
+  type: ClusterIP
+  port: 5000
+
+ingress:
+  enabled: true
+  className: nginx
+  host: speech.bfl.internal
+  path: /stt/en-US
+
+# ---- Pod scheduling: dedicated STT nodepool ---------------------------------
+# Expects a nodepool prepared as:
+#   az aks nodepool add ... --name sttpool \
+#     --node-taints workload=stt:NoSchedule \
+#     --labels workload=stt
+# Combination used:
+#   - toleration       -> lets this pod LAND on the STT-tainted nodes
+#   - soft nodeAffinity -> PREFERS STT nodes (weight 100), falls back to any
+#     untainted node if STT pool is unavailable (avoids stuck Pending)
+# Edit the value "stt" if your nodepool uses a different taint/label value.
+tolerations:
+  - key: workload
+    operator: Equal
+    value: stt
+    effect: NoSchedule
+
+affinity:
+  nodeAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        preference:
+          matchExpressions:
+            - key: workload
+              operator: In
+              values: ["stt"]

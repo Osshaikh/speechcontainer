@@ -1,0 +1,40 @@
+# =============================================================================
+# Single-pool override — collapse STT and TTS onto ONE shared "speech" pool.
+#
+# By default, examples/stt-*.yaml pin to workload=stt nodes and tts-*.yaml pin
+# to workload=tts nodes (recommended for prod — better isolation). If you want
+# to run everything on one pool instead, layer this file on top:
+#
+#   helm install stt-en osshaikh/speech-container \
+#     -f stt-en.yaml \
+#     -f prod-overrides.yaml
+#
+# This REPLACES the per-example tolerations/affinity with a single shared
+# "workload=speech" target (matches the simpler 1-pool topology).
+# =============================================================================
+
+tolerations:
+  - key: workload
+    operator: Equal
+    value: speech
+    effect: NoSchedule
+
+affinity:
+  nodeAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        preference:
+          matchExpressions:
+            - key: workload
+              operator: In
+              values: ["speech"]
+
+# ---- Optional: disruption budget (uncomment for prod) -----------------------
+# podDisruptionBudget:
+#   enabled: true
+#   minAvailable: 1
+
+# ---- Optional: tighten or loosen unified resource defaults ------------------
+# resources:
+#   requests: { cpu: "12", memory: "12Gi" }
+#   limits:   { cpu: "16", memory: "24Gi" }

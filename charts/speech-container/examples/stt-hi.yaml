@@ -1,0 +1,52 @@
+mode: stt
+
+image:
+  tag: 5.3.0-amd64-hi-in
+
+# STT minimum sizing per Microsoft Learn host-resource guidance.
+# Limits inherit from chart values.yaml (8c / 16Gi).
+resources:
+  requests:
+    cpu: "4"
+    memory: "4Gi"
+
+concurrency:
+  numberOfConcurrentRequest: 4
+
+replicaCount: 1
+
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 70
+
+service:
+  type: ClusterIP
+  port: 5000
+
+ingress:
+  enabled: true
+  className: nginx
+  host: speech.bfl.internal
+  path: /stt/hi-IN
+
+# ---- Pod scheduling: dedicated STT nodepool ---------------------------------
+# Expects nodes tainted workload=stt:NoSchedule and labeled workload=stt.
+# Soft affinity = prefers STT pool, falls back to any untainted node if STT
+# pool is unavailable. See stt-en.yaml for full rationale.
+tolerations:
+  - key: workload
+    operator: Equal
+    value: stt
+    effect: NoSchedule
+
+affinity:
+  nodeAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        preference:
+          matchExpressions:
+            - key: workload
+              operator: In
+              values: ["stt"]
