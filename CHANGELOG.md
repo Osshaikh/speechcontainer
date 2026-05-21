@@ -5,6 +5,16 @@ All notable changes to the `speech-container` Helm chart are documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.5] - 2026
+
+### Added
+- `examples/stt-ta.yaml` and `examples/tts-ta.yaml` — ready-to-use Tamil STT and Tamil TTS (PallaviNeural) values, with the same toleration / affinity / resource pattern as the en-US and hi-IN examples.
+- TTS synthesis verification step in the README's "Verifying the install" section (curl POST with SSML payload to `/cognitiveservices/v1`).
+- README note clarifying that `appVersion` tracks the STT image line; TTS has an independent version stream.
+
+### Changed
+- Examples 11 (Tamil STT) and 12 (Tamil TTS) in the README — dropped the redundant `--set image.repository=...` override. The chart's `_helpers.tpl` auto-derives the repository from `mode`, so only `image.tag` needs overriding. Now consistent with Example 13.
+
 ## [1.1.4] - 2026
 
 ### Changed

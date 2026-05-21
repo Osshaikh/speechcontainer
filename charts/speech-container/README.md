@@ -690,26 +690,40 @@ Locale codes follow BCP-47: `en-US`, `hi-IN`, `ta-IN`, `te-IN`, `mr-IN`, `bn-IN`
 Browse all available tags: https://mcr.microsoft.com/en-us/catalog?search=speech
 
 ### Example 11 — Tamil STT
+Use the ready-made `examples/stt-ta.yaml`:
+```bash
+helm install stt-ta speech-container/speech-container -n speech \
+  -f examples/stt-ta.yaml \
+  --set secretRef.enabled=true
+```
+**Result**: Tamil STT pod on `sttpool`, ingress at `speech.example.com/stt/ta-IN`. Repository is auto-derived from `mode: stt` (no need to pass `image.repository`).
+
+Alternatively, override the tag on top of the English values:
 ```bash
 helm install stt-ta speech-container/speech-container -n speech \
   -f examples/stt-en.yaml \
   --set secretRef.enabled=true \
-  --set image.repository=mcr.microsoft.com/azure-cognitive-services/speechservices/speech-to-text \
   --set image.tag=5.3.0-amd64-ta-in \
   --set ingress.path=/stt/ta-IN
 ```
-**Result**: Tamil STT pod on `sttpool`, ingress at `speech.example.com/stt/ta-IN`. Inherits STT toleration, affinity, and resource requests (4c/4Gi) from `examples/stt-en.yaml`.
 
 ### Example 12 — Tamil TTS (Pallavi neural voice)
+Use the ready-made `examples/tts-ta.yaml`:
+```bash
+helm install tts-ta speech-container/speech-container -n speech \
+  -f examples/tts-ta.yaml \
+  --set secretRef.enabled=true
+```
+**Result**: Tamil TTS pod on `ttspool`, ingress at `speech.example.com/tts/ta-IN`. Repository auto-derived from `mode: tts`.
+
+Alternatively, override the tag on top of the English values:
 ```bash
 helm install tts-ta speech-container/speech-container -n speech \
   -f examples/tts-en.yaml \
   --set secretRef.enabled=true \
-  --set image.repository=mcr.microsoft.com/azure-cognitive-services/speechservices/neural-text-to-speech \
   --set image.tag=4.6.0-amd64-ta-in-pallavineural \
   --set ingress.path=/tts/ta-IN
 ```
-**Result**: Tamil TTS pod on `ttspool`, ingress at `speech.example.com/tts/ta-IN`. Inherits TTS toleration, affinity, and resource requests (6c/12Gi).
 
 ### Example 13 — Generic "add any language" pattern
 Substitute `<LOCALE>`, `<VERSION>`, `<VOICE>`, `<RELEASE>`:
@@ -772,7 +786,24 @@ curl http://localhost:5001/status   # → JSON status
 curl -X POST "http://localhost:5001/speech/recognition/conversation/cognitiveservices/v1?language=en-US" \
   -H "Content-Type: audio/wav" \
   --data-binary "@sample.wav"
+
+# 5. Quick TTS test (English, AvaNeural)
+kubectl port-forward -n speech svc/tts-en-speech-container 5002:5000 &
+curl http://localhost:5002/ready    # → "OK"
+
+curl -X POST "http://localhost:5002/cognitiveservices/v1" \
+  -H "Content-Type: application/ssml+xml" \
+  -H "X-Microsoft-OutputFormat: riff-24khz-16bit-mono-pcm" \
+  --data '<speak version="1.0" xml:lang="en-US"><voice name="en-US-AvaNeural">Hello from disconnected Azure Speech.</voice></speak>' \
+  --output sample-output.wav
+
+# Play sample-output.wav in any audio player — should hear synthesized speech.
+
+# List supported voices on this TTS container:
+curl http://localhost:5002/cognitiveservices/voices/list
 ```
+
+> 💡 **Note on `appVersion`**: The `Chart.yaml` `appVersion: "5.3.0"` tracks the **STT** image line. TTS uses an independent version stream (currently `4.6.0`). Each example file pins its own image tag — see the [image naming pattern](#image-naming-pattern) section for current versions per workload.
 
 ---
 

@@ -1,0 +1,50 @@
+mode: tts
+
+image:
+  # Voice: PallaviNeural (ta-IN female). Other ta-IN voices: ValluvarNeural (male).
+  tag: 4.6.0-amd64-ta-in-pallavineural
+
+# Neural TTS minimum sizing per Microsoft Learn host-resource guidance.
+# Limits inherit from chart values.yaml (8c / 16Gi).
+resources:
+  requests:
+    cpu: "6"
+    memory: "12Gi"
+
+concurrency:
+  numberOfConcurrentRequest: 6
+
+replicaCount: 1
+
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 70
+
+service:
+  type: ClusterIP
+  port: 5000
+
+ingress:
+  enabled: true
+  className: nginx
+  host: speech.example.com
+  path: /tts/ta-IN
+
+# Pod scheduling: dedicated TTS nodepool (workload=tts taint + label).
+tolerations:
+  - key: workload
+    operator: Equal
+    value: tts
+    effect: NoSchedule
+
+affinity:
+  nodeAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        preference:
+          matchExpressions:
+            - key: workload
+              operator: In
+              values: ["tts"]

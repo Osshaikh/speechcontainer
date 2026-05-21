@@ -1,0 +1,49 @@
+mode: stt
+
+image:
+  tag: 5.3.0-amd64-ta-in
+
+# STT minimum sizing per Microsoft Learn host-resource guidance.
+# Request = guaranteed scheduling floor. Limits inherit from chart values.yaml (8c / 16Gi).
+resources:
+  requests:
+    cpu: "4"
+    memory: "4Gi"
+
+concurrency:
+  numberOfConcurrentRequest: 4
+
+replicaCount: 1
+
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 70
+
+service:
+  type: ClusterIP
+  port: 5000
+
+ingress:
+  enabled: true
+  className: nginx
+  host: speech.example.com
+  path: /stt/ta-IN
+
+# Pod scheduling: dedicated STT nodepool (workload=stt taint + label).
+tolerations:
+  - key: workload
+    operator: Equal
+    value: stt
+    effect: NoSchedule
+
+affinity:
+  nodeAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        preference:
+          matchExpressions:
+            - key: workload
+              operator: In
+              values: ["stt"]
