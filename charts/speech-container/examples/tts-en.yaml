@@ -1,0 +1,60 @@
+mode: tts
+
+image:
+  # Voice: AvaNeural (en-US female). Latest tag verified on MCR.
+  tag: 4.6.0-amd64-en-us-avaneural
+
+# Neural TTS minimum sizing per Microsoft Learn host-resource guidance.
+# Neural voices need more CPU + memory than STT for waveform synthesis.
+# Limits inherit from chart values.yaml (8c / 16Gi).
+resources:
+  requests:
+    cpu: "6"
+    memory: "12Gi"
+
+concurrency:
+  numberOfConcurrentRequest: 6
+
+replicaCount: 1
+
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 70
+
+service:
+  type: ClusterIP
+  port: 5000
+
+ingress:
+  enabled: true
+  className: nginx
+  host: speech.bfl.internal
+  path: /tts/en-US
+
+# ---- Pod scheduling: dedicated TTS nodepool ---------------------------------
+# Expects a nodepool prepared as:
+#   az aks nodepool add ... --name ttspool \
+#     --node-taints workload=tts:NoSchedule \
+#     --labels workload=tts
+# Combination used:
+#   - toleration       -> lets this pod LAND on the TTS-tainted nodes
+#   - soft nodeAffinity -> PREFERS TTS nodes (weight 100), falls back to any
+#     untainted node if TTS pool is unavailable (avoids stuck Pending)
+# Edit the value "tts" if your nodepool uses a different taint/label value.
+tolerations:
+  - key: workload
+    operator: Equal
+    value: tts
+    effect: NoSchedule
+
+affinity:
+  nodeAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        preference:
+          matchExpressions:
+            - key: workload
+              operator: In
+              values: ["tts"]

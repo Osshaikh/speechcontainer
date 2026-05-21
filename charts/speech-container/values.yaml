@@ -1,0 +1,165 @@
+# =============================================================================
+#  speech-container default values
+# -----------------------------------------------------------------------------
+#  Pick mode = stt OR tts. All resource and image fields are fully overridable
+#  per release via your own values file or --set flags.
+# =============================================================================
+
+mode: stt          # stt | tts — drives image repo, port, default voice handling
+
+# ---- image -------------------------------------------------------------------
+image:
+  registry: mcr.microsoft.com
+  # STT repo: azure-cognitive-services/speechservices/speech-to-text
+  # TTS repo: azure-cognitive-services/speechservices/neural-text-to-speech
+  repository: ""    # auto-derived from mode if blank (see _helpers.tpl)
+  # Tag format: <major>.<minor>.<patch>-amd64-<locale>[-<voice>]
+  # Examples:
+  #   STT en-US:        5.3.0-amd64-en-us
+  #   STT hi-IN:        5.3.0-amd64-hi-in
+  #   TTS Hindi Swara:  4.6.0-amd64-hi-in-swaraneural
+  #   TTS en-US Ava:    4.6.0-amd64-en-us-avaneural
+  tag: 5.3.0-amd64-en-us
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+
+# ---- container args (passed as docker args at runtime) -----------------------
+args:
+  eula: accept                        # MUST be 'accept'
+  billing: ""                         # https://<resource>.cognitiveservices.azure.com/
+  apikey: ""                          # Cognitive Services key (use secretRef instead in prod)
+
+# Optional: pull billing + apikey from a pre-created secret instead of inline values
+secretRef:
+  enabled: false
+  name: speech-credentials
+  billingKey: billing
+  apiKeyKey: apikey
+
+# ---- concurrency knob (informational; resources below are authoritative) -----
+concurrency:
+  numberOfConcurrentRequest: 5        # raise for higher load — must match your CPU sizing
+
+# ---- resources — MS Learn aligned defaults -----------------------------------
+# Reference: https://learn.microsoft.com/azure/ai-services/speech-service/speech-container-howto
+#   STT          : min 4c/4GB, recommended 8c/8GB + 4-8 GB for speech model
+#   Neural TTS   : min 6c/12GB, recommended 8c/16 GB
+#
+# Unified default: 8 cores + 8 GB request, burstable to 16 GB.
+# This sizing covers BOTH modes:
+#   - STT: 8 GB base + room for 4-8 GB speech model load (handled by limit headroom)
+#   - TTS: 8 GB base, expands to 16 GB during synthesis bursts
+# Override per-release if you need tighter sizing.
+resources:
+  requests:
+    cpu: "8"
+    memory: "8Gi"
+  limits:
+    cpu: "8"
+    memory: "16Gi"
+
+# ---- environment variables forwarded to the container -----------------------
+env:
+  # The chart adds DECODER_MAX_COUNT automatically from concurrency.numberOfConcurrentRequest
+  # Append additional environment variables here if needed.
+  extra: []
+  #   - name: ASPNETCORE_URLS
+  #     value: "http://+:5000"
+
+# ---- replicas / autoscaling --------------------------------------------------
+replicaCount: 1
+
+autoscaling:
+  enabled: true                       # HPA on by default — scale on CPU pressure
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+  # Optional memory target — uncomment if you want to scale on memory too
+  # targetMemoryUtilizationPercentage: 80
+
+# ---- pod disruption budget ---------------------------------------------------
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+
+# ---- service -----------------------------------------------------------------
+service:
+  # Default ClusterIP — exposure is via the shared NGINX Ingress (see ingress: block below).
+  # Override to LoadBalancer for demos / parallel rollout where each container needs its own public IP.
+  type: ClusterIP                     # ClusterIP | NodePort | LoadBalancer
+  port: 5000
+  targetPort: 5000
+  annotations: {}
+  # For Azure internal LB (only relevant if type=LoadBalancer):
+  #   service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+
+# ---- ingress -----------------------------------------------------------------
+# When enabled, each release publishes ONE Ingress rule on a shared hostname.
+# NGINX Ingress Controller automatically merges rules from different Ingress
+# objects that share the same `host`, so the 4 releases (stt-en, stt-hi,
+# tts-en, tts-hi) end up as one virtual site:
+#
+#   wss://<host>/stt/en-US/speech/recognition/...   -> svc/stt-en
+#   wss://<host>/stt/hi-IN/speech/recognition/...   -> svc/stt-hi
+#   http://<host>/tts/en-US/cognitiveservices/v1    -> svc/tts-en
+#   http://<host>/tts/hi-IN/cognitiveservices/v1    -> svc/tts-hi
+#
+# The path prefix (e.g. /stt/en-US) is stripped before forwarding so the
+# container sees its native URL structure unchanged.
+ingress:
+  enabled: false
+  className: nginx                    # ingressClassName (must match installed controller)
+  host: speech.bfl.internal           # shared hostname across all 4 releases
+  path: ""                            # REQUIRED per release (e.g. /stt/en-US)  -- set in examples/*.yaml
+  # WebSocket / long-call timeouts (seconds). 1h covers most call-center sessions.
+  proxyReadTimeout: "3600"
+  proxySendTimeout: "3600"
+  # Max request body for TTS SSML payloads
+  proxyBodySize: "10m"
+  # Extra controller-specific annotations (merged on top of the WebSocket defaults)
+  annotations: {}
+    # nginx.ingress.kubernetes.io/auth-type: basic
+    # nginx.ingress.kubernetes.io/limit-rps: "50"
+  tls:
+    enabled: false
+    secretName: ""                    # name of pre-existing TLS secret (cert-manager or BYO)
+
+# ---- pod scheduling ----------------------------------------------------------
+# Defaults are intentionally empty — chart stays environment-neutral.
+#
+# RECOMMENDED for production: use toleration + SOFT (preferred) nodeAffinity,
+# NOT hard nodeSelector. See examples/prod-overrides.yaml for the full pattern.
+# Soft affinity prefers your speech pool but lets pods fall back to any node
+# if the speech pool is unavailable, avoiding "stuck Pending" failure modes.
+nodeSelector: {}
+tolerations: []
+affinity: {}
+priorityClassName: ""
+
+# ---- probes ------------------------------------------------------------------
+readinessProbe:
+  enabled: true
+  path: /ready                        # supported on STT/TTS 4.x+
+  initialDelaySeconds: 60
+  periodSeconds: 30
+  failureThreshold: 6
+
+livenessProbe:
+  enabled: true
+  path: /status
+  initialDelaySeconds: 120
+  periodSeconds: 60
+  failureThreshold: 3
+
+# ---- security context --------------------------------------------------------
+podSecurityContext:
+  runAsNonRoot: false                 # Speech containers require root for model load
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+
+# ---- service account ---------------------------------------------------------
+serviceAccount:
+  create: true
+  name: ""                            # auto-derived if blank
+  annotations: {}

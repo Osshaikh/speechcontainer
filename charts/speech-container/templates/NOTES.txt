@@ -1,0 +1,23 @@
+{{ .Chart.Name }} {{ .Chart.Version }} — release "{{ .Release.Name }}" deployed in namespace "{{ .Release.Namespace }}".
+
+Mode               : {{ .Values.mode }}
+Image              : {{ include "speech-container.image.full" . }}
+CPU request/limit  : {{ .Values.resources.requests.cpu }} / {{ .Values.resources.limits.cpu }}
+Memory request/lim : {{ .Values.resources.requests.memory }} / {{ .Values.resources.limits.memory }}
+Concurrency        : DECODER_MAX_COUNT={{ .Values.concurrency.numberOfConcurrentRequest }}
+Service type       : {{ .Values.service.type }} (port {{ .Values.service.port }})
+
+Watch rollout:
+  kubectl rollout status deployment/{{ include "speech-container.fullname" . }} -n {{ .Release.Namespace }}
+
+Get endpoint:
+{{- if eq .Values.service.type "LoadBalancer" }}
+  kubectl get svc {{ include "speech-container.fullname" . }} -n {{ .Release.Namespace }} \
+      -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+{{- else }}
+  kubectl port-forward svc/{{ include "speech-container.fullname" . }} -n {{ .Release.Namespace }} {{ .Values.service.port }}:{{ .Values.service.port }}
+{{- end }}
+
+Health checks:
+  curl http://<ip>:{{ .Values.service.port }}/status
+  curl http://<ip>:{{ .Values.service.port }}/ready
