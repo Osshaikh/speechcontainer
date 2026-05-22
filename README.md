@@ -89,7 +89,7 @@ Bug reports, feature requests, and PRs are welcome. See [CONTRIBUTING.md](CONTRI
 
 ## License
 
-MIT © Osama Shaikh. See [LICENSE](LICENSE).
+MIT See [LICENSE](LICENSE).
 
 ## Acknowledgements
 
