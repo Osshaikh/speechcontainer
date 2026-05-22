@@ -52,10 +52,16 @@ speechcontainer/
 
 | Workload | Locales validated | Image |
 |---|---|---|
-| Speech-to-Text (STT) | en-US, hi-IN (any BCP-47 locale supported by MCR) | `mcr.microsoft.com/azure-cognitive-services/speechservices/speech-to-text` |
-| Neural Text-to-Speech (TTS) | en-US (JennyNeural), hi-IN (SwaraNeural) — any voice from MCR works | `mcr.microsoft.com/azure-cognitive-services/speechservices/neural-text-to-speech` |
+| Speech-to-Text (STT) | en-US, hi-IN, ta-IN (any BCP-47 locale supported by MCR) | `mcr.microsoft.com/azure-cognitive-services/speechservices/speech-to-text` |
+| Neural Text-to-Speech (TTS) | en-US (AvaNeural), hi-IN (SwaraNeural), ta-IN (PallaviNeural) — any voice from MCR works | `mcr.microsoft.com/azure-cognitive-services/speechservices/neural-text-to-speech` |
 
-Want a different locale (Tamil, Telugu, Marathi, etc.)? See the **"Adding additional language containers"** section in the [chart README](charts/speech-container/README.md#adding-additional-language-containers).
+**Image references:**
+- STT tags: https://mcr.microsoft.com/product/azure-cognitive-services/speechservices/speech-to-text/tags
+- TTS tags: https://mcr.microsoft.com/product/azure-cognitive-services/speechservices/neural-text-to-speech/tags
+- TTS voice gallery (preview): https://speech.microsoft.com/portal/voicegallery
+- Microsoft Learn: https://learn.microsoft.com/azure/ai-services/speech-service/speech-container-howto
+
+Want a different locale (Telugu, Marathi, Bengali, etc.)? See the **"Adding additional language containers"** section in the [chart README](charts/speech-container/README.md#adding-additional-language-containers).
 
 ## Platform compatibility
 

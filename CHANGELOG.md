@@ -5,6 +5,15 @@ All notable changes to the `speech-container` Helm chart are documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.6] - 2026
+
+### Added
+- "Image & documentation references" subsection in the chart README — direct links to MCR tag pages for STT and TTS, Microsoft Learn how-to, language-support catalog, TTS voice gallery, and disconnected containers commitment tier docs.
+- Repo front-page README now includes the same key image links inline under "Supported workloads".
+
+### Changed
+- Repo README workload table: Tamil added to validated locales (matches new `examples/*-ta.yaml`); TTS voice example updated from JennyNeural to AvaNeural to match the actual default in `examples/tts-en.yaml`.
+
 ## [1.1.5] - 2026
 
 ### Added

@@ -678,6 +678,20 @@ done
 
 The chart is language-agnostic — to deploy any locale Microsoft publishes on MCR, override `image.repository` + `image.tag` at install time. You can reuse the STT or TTS example file for scheduling/resources and just swap the image.
 
+### Image & documentation references
+
+Browse available image tags and the official catalog of supported locales/voices:
+
+| Resource | Link |
+|---|---|
+| **STT image (all tags)** | https://mcr.microsoft.com/product/azure-cognitive-services/speechservices/speech-to-text/tags |
+| **TTS image (all tags)** | https://mcr.microsoft.com/product/azure-cognitive-services/speechservices/neural-text-to-speech/tags |
+| **MCR catalog (search "speech")** | https://mcr.microsoft.com/en-us/catalog?search=speech |
+| **Microsoft Learn — Speech container how-to** | https://learn.microsoft.com/azure/ai-services/speech-service/speech-container-howto |
+| **Supported STT locales & TTS voices** | https://learn.microsoft.com/azure/ai-services/speech-service/language-support |
+| **Full TTS voice gallery (sample audio)** | https://speech.microsoft.com/portal/voicegallery |
+| **Disconnected container commitment tiers** | https://learn.microsoft.com/azure/ai-services/containers/disconnected-containers |
+
 ### Image naming pattern
 
 | Workload | Repository | Tag pattern |
@@ -687,7 +701,7 @@ The chart is language-agnostic — to deploy any locale Microsoft publishes on M
 
 Locale codes follow BCP-47: `en-US`, `hi-IN`, `ta-IN`, `te-IN`, `mr-IN`, `bn-IN`, `gu-IN`, `kn-IN`, `ml-IN`, `pa-IN`, `ur-IN`, etc.
 
-Browse all available tags: https://mcr.microsoft.com/en-us/catalog?search=speech
+> 💡 **Tip:** Open the MCR tags page for STT or TTS above to see every locale + version Microsoft has published. The TTS voice gallery lets you hear samples before picking a `<voice>neural` to deploy.
 
 ### Example 11 — Tamil STT
 Use the ready-made `examples/stt-ta.yaml`:
