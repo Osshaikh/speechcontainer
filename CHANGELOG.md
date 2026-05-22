@@ -5,6 +5,25 @@ All notable changes to the `speech-container` Helm chart are documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.9] - 2026
+
+### Fixed (blocking for Telugu STT and any future per-locale STT drift)
+- **README Example 14 bulk install: Telugu STT tag corrected** `5.3.0-amd64-te-in` → `5.4.0-amd64-te-in`. The 5.3.0 tag does not exist on MCR — `te-IN` STT jumped straight from `3.10.0` to `5.4.0`. Following Example 14 verbatim caused guaranteed `ImagePullBackOff` for Telugu STT (peer-reported and verified live on `iitbombay-aks`).
+- **All STT tags in Example 14 verified against MCR Registry v2 API** and pinned to actual published versions: en/hi/te use `5.4.0`; ta/mr/bn/gu use `5.3.0`.
+
+### Added
+- **New STT version-drift warning callout** in §"Adding additional language containers" — parallel to the existing TTS callout. Documents the actual STT-version-per-locale table (5.4.0 vs 5.3.0 vs preview-only) and reminds users that STT versions are **not synchronized**. Explicitly calls out the Telugu trap (no 5.3.0-te-in tag).
+- Example 14 STT block now includes inline comments pointing back to the Tag lookup helper and noting which locales sit on which version line.
+
+### Changed
+- Header comment in Example 14 reworded from "STT line is 5.3.0 for all locales" → "STT versions are NOT synchronized across locales; always re-check with the Tag lookup helper before running".
+- TTS comment clarified: "4.7.0 is the universal current line for every locale Microsoft publishes" — i.e., TTS and STT have different version-synchronization behaviors.
+- Example 14 TTS block extended to include `bn-IN` (`4.7.0-amd64-bn-in-tanishaaneural`) so the example demonstrates the same locale set across both workloads.
+
+### Fixed (cosmetic)
+- **Quickstart `/ready` curl comment** now shows actual JSON payload (was `→ "OK"`). Brings Quickstart in sync with the Verifying section already fixed in 1.1.7.
+- **TTS `/ready` JSON example** corrected: `"service":"texttospeech"` → `"service":"neuraltexttospeechonprem"` (matches the actual container response field; observed via live curl on chart 1.1.8 deployment).
+
 ## [1.1.8] - 2026
 
 ### Fixed (blocking for multi-language adopters)

@@ -87,7 +87,7 @@ helm install tts-en speech-container/speech-container -n speech \
 # 5. Verify
 kubectl get pods -n speech
 kubectl port-forward -n speech svc/stt-en-speech-container 5001:5000
-curl http://localhost:5001/ready    # → "OK"
+curl http://localhost:5001/ready    # → {"service":"speechtotext","ready":"ready","message":"Api Key is valid, no action needed."}
 ```
 
 For taints, ingress, capacity planning, and language-specific containers, read the rest of this guide.
@@ -711,6 +711,16 @@ Locale codes follow BCP-47: `en-US`, `hi-IN`, `ta-IN`, `te-IN`, `mr-IN`, `bn-IN`
 
 > ⚠️ **TTS version stream — read this before adding any non-English/Hindi locale.** Microsoft publishes TTS images on **two parallel streams**: `4.6.0` (legacy — only some en-US and hi-IN voices) and `4.7.0` (current — all en-US, hi-IN, plus every Indic locale: `ta`, `mr`, `te`, `bn`, `gu`, `kn`, `ml`, `pa`, `ur`, …). **There is no `4.6.0` tag for ta-IN, mr-IN, te-IN, bn-IN, gu-IN, kn-IN, ml-IN, pa-IN, or ur-IN.** Always default to **`4.7.0`** for TTS unless you have a specific reason to pin an older en-US/hi-IN voice. Following an old `4.6.0` pattern for a new locale will cause `ImagePullBackOff`.
 
+> ⚠️ **STT version is per-locale — DO NOT assume one version covers all languages.** Unlike TTS (where 4.7.0 is universal), STT versions are **not synchronized across locales**. As of this writing:
+>
+> | STT version | Locales currently on this version |
+> |---|---|
+> | **5.4.0** | en-US, hi-IN, te-IN, ml-IN, pa-IN, ur-IN |
+> | **5.3.0** | ta-IN, mr-IN, bn-IN, gu-IN |
+> | Preview only | kn-IN (no GA tag yet — `5.0.x-preview` is the latest) |
+>
+> Microsoft bumps individual locales independently as model improvements ship, so this table will drift. **Always run the [Tag lookup helper](#tag-lookup-helper-before-installing-a-new-locale) for your target locale before `helm install`** — a single hardcoded version copied from another language will frequently hit `ImagePullBackOff`. Example: `5.3.0-amd64-te-in` does **not** exist; Telugu STT went straight from `3.10.0` to `5.4.0`.
+
 ### Tag lookup helper (before installing a new locale)
 
 Always confirm the exact tag exists on MCR before running `helm install`. This curl + jq snippet hits the MCR v2 registry API (no Docker needed, no workstation pull):
@@ -787,13 +797,15 @@ helm install <RELEASE> speech-container/speech-container -n speech \
 
 ### Example 14 — Bulk install many languages
 ```bash
-# STT for English, Hindi, Tamil, Telugu, Marathi (STT line is 5.3.0 for all locales)
+# STT — verified tags as of chart 1.1.9. Always re-check with the Tag lookup
+# helper above before running; STT versions are NOT synchronized across locales.
 declare -A STT_LANGS=(
-  [en]="5.3.0-amd64-en-us"
-  [hi]="5.3.0-amd64-hi-in"
-  [ta]="5.3.0-amd64-ta-in"
-  [te]="5.3.0-amd64-te-in"
+  [en]="5.4.0-amd64-en-us"
+  [hi]="5.4.0-amd64-hi-in"
+  [ta]="5.3.0-amd64-ta-in"      # ta/mr/bn/gu still on 5.3.0
   [mr]="5.3.0-amd64-mr-in"
+  [bn]="5.3.0-amd64-bn-in"
+  [te]="5.4.0-amd64-te-in"      # te jumped 3.10 → 5.4; no 5.3.0-te-in tag exists
 )
 
 for lang in "${!STT_LANGS[@]}"; do
@@ -804,13 +816,14 @@ for lang in "${!STT_LANGS[@]}"; do
     --set ingress.path=/stt/$lang
 done
 
-# TTS for the same set (TTS line is 4.7.0 for ALL locales — including en/hi)
+# TTS — 4.7.0 is the universal current line for every locale Microsoft publishes
 declare -A TTS_LANGS=(
   [en]="4.7.0-amd64-en-us-avaneural"
   [hi]="4.7.0-amd64-hi-in-swaraneural"
   [ta]="4.7.0-amd64-ta-in-pallavineural"
   [te]="4.7.0-amd64-te-in-shrutineural"
   [mr]="4.7.0-amd64-mr-in-aarohineural"
+  [bn]="4.7.0-amd64-bn-in-tanishaaneural"
 )
 
 for lang in "${!TTS_LANGS[@]}"; do
@@ -849,7 +862,7 @@ curl -X POST "http://localhost:5001/speech/recognition/conversation/cognitiveser
 
 # 5. Quick TTS test (English, AvaNeural)
 kubectl port-forward -n speech svc/tts-en-speech-container 5002:5000 &
-curl http://localhost:5002/ready    # → {"service":"texttospeech","ready":"ready","message":"Api Key is valid, no action needed."}
+curl http://localhost:5002/ready    # → {"service":"neuraltexttospeechonprem","ready":"ready","message":"Api Key is valid, no action needed."}
 
 curl -X POST "http://localhost:5002/cognitiveservices/v1" \
   -H "Content-Type: application/ssml+xml" \

@@ -1,7 +1,7 @@
 apiVersion: v2
 name: speech-container
 type: application
-version: 1.1.8
+version: 1.1.9
 appVersion: "5.3.0"
 description: |
   Helm chart for deploying Azure AI Speech disconnected containers (Speech-to-Text
