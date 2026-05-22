@@ -28,7 +28,7 @@ service:
 ingress:
   enabled: true
   className: nginx
-  host: speech.bfl.internal
+  host: speech.example.com
   path: /stt/hi-IN
 
 # ---- Pod scheduling: dedicated STT nodepool ---------------------------------

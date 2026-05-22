@@ -5,6 +5,23 @@ All notable changes to the `speech-container` Helm chart are documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.7] - 2026
+
+### Fixed (blocking)
+- `examples/tts-ta.yaml` image tag corrected from non-existent `4.6.0-amd64-ta-in-pallavineural` to actual MCR-published `4.7.0-amd64-ta-in-pallavineural` (Tamil TTS is on a newer version stream than en-US/hi-IN). The previous tag caused `ImagePullBackOff` for any client following the README literally.
+- All four en/hi example values files now use `host: speech.example.com` (previously `speech.bfl.internal`, a leftover from an internal customer engagement). Now consistent with Tamil examples and README narrative.
+- README Example 12 (Tamil TTS) and "Image naming pattern" table updated to reference the correct `4.7.0` tag.
+
+### Fixed (doc consistency)
+- README header now reflects current chart version (was stuck at 1.1.4).
+- Clarified Prerequisite #1 — same chart works for both **Connected mode** (S0 key, no commitment plan) and **Disconnected mode** (S0 + commitment tier). Previous wording incorrectly implied commitment is always required.
+- `helm pull` walkthrough now lists all 7 example files (added `stt-ta.yaml`, `tts-ta.yaml`).
+- "Verifying" section: `/ready` responses now show actual JSON payload (`{"service":"...","ready":"ready","message":"Api Key is valid, no action needed."}`) instead of the misleading `"OK"`.
+- "Upgrading" section: `helm repo update osshaikh` → `helm repo update speech-container` (matches the repo alias used in the install instructions).
+- Troubleshooting cross-reference to Network section: anchor `#4-network--firewall-whitelisting` → `#2-network--firewall-whitelisting` (was broken).
+- TOC entry "Azure Key Vault integration (AKS)" now anchors to the actual `<details>` block inside the secret section, not the duplicate `#4-speech-credentials-secret` anchor.
+- README "Required versions" now explicitly states Helm 4.x is also tested and supported (previous floor of 3.10 only).
+
 ## [1.1.6] - 2026
 
 ### Added

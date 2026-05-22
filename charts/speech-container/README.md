@@ -6,8 +6,9 @@ Replaces the abandoned `microsoft/cognitive-services-speech-onpremise` chart (v0
 
 - **Chart repo**: `https://osshaikh.github.io/speechcontainer/`
 - **Source**: `https://github.com/Osshaikh/speechcontainer`
-- **App version**: 5.3.0 (STT) / 4.6.0 (TTS)
-- **Chart version**: 1.1.4
+- **App version**: 5.3.0 (STT) / 4.6.0+ (TTS — version varies by locale; see [image references](#image--documentation-references))
+- **Chart version**: 1.1.7
+- **Helm**: 3.10+ (Helm 4.x also tested and supported)
 
 ---
 
@@ -22,7 +23,7 @@ Replaces the abandoned `microsoft/cognitive-services-speech-onpremise` chart (v0
    - [Network / firewall whitelisting](#2-network--firewall-whitelisting)
    - [Node pools, taints & labels](#3-node-pools-taints--labels-split-pool-pattern)
    - [Speech credentials secret](#4-speech-credentials-secret)
-   - [Azure Key Vault integration (AKS)](#4-speech-credentials-secret)
+   - [Azure Key Vault integration (AKS)](#azure-key-vault-integration-aks)
    - [Ingress controller](#5-ingress-controller)
 6. [Installing the chart](#installing-the-chart)
 7. [Configurable values reference](#configurable-values-reference)
@@ -50,7 +51,7 @@ The chart targets **standard Kubernetes APIs** (Deployment, Service, Ingress, Se
 
 **Required versions:**
 - Kubernetes ≥ **1.27**
-- Helm ≥ **3.10**
+- Helm ≥ **3.10** (Helm 4.x also tested and supported)
 - An ingress controller (chart examples assume `ingress-nginx`, but any controller works)
 
 > 💡 **Why AKS gets special guidance:** This chart originated for Azure customers running disconnected Speech in regulated environments. AKS-specific sections (Key Vault CSI driver, Workload Identity, ACR mirror) are flagged with **AKS** callouts; everything else is platform-neutral.
@@ -241,7 +242,11 @@ echo "Key:      $KEY"
 ```
 Then activate the disconnected commitment via the Portal (Commitment Tiers blade) — there's no CLI flow for commitment purchase.
 
-> ⚠️ Self-service trial keys won't work for offline use — disconnected containers require an active commitment tier or EA approval.
+> 💡 **Connected mode vs Disconnected mode** — the same chart works for both:
+> - **Connected mode** (default): an S0 Speech resource with no commitment plan. The container "calls home" to Azure for periodic license checks. No special purchase required.
+> - **Disconnected mode** (offline / air-gapped): requires an active **commitment tier** on the Speech resource purchased via the Azure Portal → Speech resource → **Commitment Tiers** → enable **Disconnected** mode. Self-service trial keys cannot run in disconnected mode — needs commitment tier or EA approval.
+>
+> Both modes use the same images, the same chart values, and the same `kubectl create secret`. Only the Speech resource configuration differs.
 
 ### 2. Network / firewall whitelisting
 
@@ -337,6 +342,7 @@ In all cases, the chart sees a **standard Kubernetes Secret** — the chart does
 
 > 💡 **AKS — recommended: Azure Key Vault** (collapsible details below). Skip if you're using a different vault or staying with the inline `kubectl create secret` above.
 
+<a id="azure-key-vault-integration-aks"></a>
 <details>
 <summary><b>Azure Key Vault integration via Secrets Store CSI Driver (AKS)</b></summary>
 
@@ -487,7 +493,7 @@ helm install stt-en speech-container/speech-container \
 To grab the example value files without cloning the repo:
 ```bash
 helm pull speech-container/speech-container --untar
-ls speech-container/examples/   # stt-en.yaml, stt-hi.yaml, tts-en.yaml, tts-hi.yaml, prod-overrides.yaml
+ls speech-container/examples/   # stt-en.yaml, stt-hi.yaml, stt-ta.yaml, tts-en.yaml, tts-hi.yaml, tts-ta.yaml, prod-overrides.yaml
 ```
 
 ---
@@ -697,7 +703,7 @@ Browse available image tags and the official catalog of supported locales/voices
 | Workload | Repository | Tag pattern |
 |---|---|---|
 | **STT** | `mcr.microsoft.com/azure-cognitive-services/speechservices/speech-to-text` | `<version>-amd64-<locale>` (e.g. `5.3.0-amd64-ta-in`) |
-| **TTS** | `mcr.microsoft.com/azure-cognitive-services/speechservices/neural-text-to-speech` | `<version>-amd64-<locale>-<voice>neural` (e.g. `4.6.0-amd64-ta-in-pallavineural`) |
+| **TTS** | `mcr.microsoft.com/azure-cognitive-services/speechservices/neural-text-to-speech` | `<version>-amd64-<locale>-<voice>neural` (e.g. `4.7.0-amd64-ta-in-pallavineural`) |
 
 Locale codes follow BCP-47: `en-US`, `hi-IN`, `ta-IN`, `te-IN`, `mr-IN`, `bn-IN`, `gu-IN`, `kn-IN`, `ml-IN`, `pa-IN`, `ur-IN`, etc.
 
@@ -735,7 +741,7 @@ Alternatively, override the tag on top of the English values:
 helm install tts-ta speech-container/speech-container -n speech \
   -f examples/tts-en.yaml \
   --set secretRef.enabled=true \
-  --set image.tag=4.6.0-amd64-ta-in-pallavineural \
+  --set image.tag=4.7.0-amd64-ta-in-pallavineural \
   --set ingress.path=/tts/ta-IN
 ```
 
@@ -793,8 +799,7 @@ kubectl describe pod -n speech -l app.kubernetes.io/instance=stt-en | grep -A 5 
 
 # 3. Probe the container endpoint
 kubectl port-forward -n speech svc/stt-en-speech-container 5001:5000 &
-curl http://localhost:5001/ready    # → "OK"
-curl http://localhost:5001/status   # → JSON status
+curl http://localhost:5001/ready    # → {"service":"speechtotext","ready":"ready","message":"Api Key is valid, no action needed."}
 
 # 4. Quick STT test (English)
 curl -X POST "http://localhost:5001/speech/recognition/conversation/cognitiveservices/v1?language=en-US" \
@@ -803,7 +808,7 @@ curl -X POST "http://localhost:5001/speech/recognition/conversation/cognitiveser
 
 # 5. Quick TTS test (English, AvaNeural)
 kubectl port-forward -n speech svc/tts-en-speech-container 5002:5000 &
-curl http://localhost:5002/ready    # → "OK"
+curl http://localhost:5002/ready    # → {"service":"texttospeech","ready":"ready","message":"Api Key is valid, no action needed."}
 
 curl -X POST "http://localhost:5002/cognitiveservices/v1" \
   -H "Content-Type: application/ssml+xml" \
@@ -825,7 +830,7 @@ curl http://localhost:5002/cognitiveservices/voices/list
 
 ```bash
 # Refresh repo
-helm repo update osshaikh
+helm repo update speech-container
 
 # Upgrade (preserves existing values)
 helm upgrade stt-en speech-container/speech-container -n speech \
@@ -862,7 +867,7 @@ kubectl delete namespace speech     # optional cleanup
 | Pod `CrashLoopBackOff`, log `Eula must be accepted` | `args.eula` missing or not `accept` | Re-install with `--set args.eula=accept` |
 | Pod `CrashLoopBackOff`, log `Billing endpoint…validation failed` | Wrong billing URL or expired key | Verify Secret content; rotate key in portal |
 | Pod log `Container does not have a valid disconnected container license` | Disconnected commitment not active on Speech resource | Purchase commitment tier in Azure portal |
-| Image pull fails `ImagePullBackOff` | Firewall blocks `mcr.microsoft.com` | Whitelist MCR endpoints (see [Network](#4-network--firewall-whitelisting)) |
+| Image pull fails `ImagePullBackOff` | Firewall blocks `mcr.microsoft.com` | Whitelist MCR endpoints (see [Network](#2-network--firewall-whitelisting)) |
 | `helm install` errors `args.billing is required` | Forgot `--set secretRef.enabled=true` AND no inline billing | Either enable secretRef or pass `--set args.billing=...` |
 | Pod runs but `/ready` returns 503 for ~60s | Speech model still loading from disk | Wait 60–90s; increase readiness probe `initialDelaySeconds` if needed |
 | HPA stays at 1 replica under load | Metrics-server missing / wrong target | `kubectl top pods -n speech`; verify metrics-server installed |
