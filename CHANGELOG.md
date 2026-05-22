@@ -5,6 +5,26 @@ All notable changes to the `speech-container` Helm chart are documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.8] - 2026
+
+### Fixed (blocking for multi-language adopters)
+- **All TTS examples and references standardized on `4.7.0`** (previously a mix of `4.6.0` and `4.7.0`). Validated against MCR: locales `ta-IN`, `mr-IN`, `te-IN`, `bn-IN`, `gu-IN`, `kn-IN`, `ml-IN`, `pa-IN`, `ur-IN` are published **only on the 4.7.0 line** — there is no `4.6.0` tag for them. The `4.7.0` line also covers all en-US and hi-IN voices, so it's now the safe universal default. Following the previous `4.6.0` pattern caused guaranteed `ImagePullBackOff` for any non-English/Hindi locale (peer-reported failure for Marathi `mr-IN` and Tamil `ta-IN`).
+- `examples/tts-en.yaml`: `4.6.0-amd64-en-us-avaneural` → `4.7.0-amd64-en-us-avaneural`.
+- `examples/tts-hi.yaml`: `4.6.0-amd64-hi-in-swaraneural` → `4.7.0-amd64-hi-in-swaraneural`.
+- `values.yaml` example comments updated to 4.7.0 with a note that new locales ship only on 4.7.0.
+
+### Added
+- **Tag lookup helper** in §"Adding additional language containers" — curl + jq snippet against the MCR v2 registry API to list every published tag for a locale before installing. More reliable than `docker pull` and catches typos before `ImagePullBackOff`.
+- **TTS version-stream warning callout** at the top of the image naming pattern section, explicitly listing which locales require 4.7.0 and warning against copying the legacy 4.6.0 pattern for new languages.
+- **Multi-language capacity callout** under Example 14 bulk-install — explains that each language = one extra pod, and that with chart defaults only 2 TTS pods fit per 16-core node. Rule of thumb: `ceil(num_TTS_languages / 2)` ttspool nodes. Explains why pods stay `Pending` instead of escaping to other pools (taint `workload=tts:NoSchedule` blocks fallback by design).
+- **Example 14 (bulk install) extended** with a parallel TTS loop covering en/hi/ta/te/mr on 4.7.0, demonstrating the universal TTS line in practice.
+
+### Changed
+- Header banner reworded: `5.3.0 (STT) / 4.6.0+ (TTS — varies)` → `5.3.0 (STT) / 4.7.0 (TTS — current; some legacy en-US/hi-IN voices also on 4.6.0)` with explicit list of locales that require 4.7.0.
+- Default-values reference: `4.6.0-amd64-en-us-avaneural` → `4.7.0-amd64-en-us-avaneural` (matches the updated example file).
+- Capacity-planning ttspool row now explicitly states "1 node per 2 language containers" so the multi-language sizing math is visible without scrolling to the troubleshooting section.
+- `appVersion` note clarifies TTS line is now 4.7.0 (legacy 4.6.0 still exists for some en/hi voices).
+
 ## [1.1.7] - 2026
 
 ### Fixed (blocking)

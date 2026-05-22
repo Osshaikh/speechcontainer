@@ -17,8 +17,12 @@ image:
   # Examples:
   #   STT en-US:        5.3.0-amd64-en-us
   #   STT hi-IN:        5.3.0-amd64-hi-in
-  #   TTS Hindi Swara:  4.6.0-amd64-hi-in-swaraneural
-  #   TTS en-US Ava:    4.6.0-amd64-en-us-avaneural
+  #   TTS Hindi Swara:  4.7.0-amd64-hi-in-swaraneural
+  #   TTS en-US Ava:    4.7.0-amd64-en-us-avaneural
+  #   TTS Tamil Pallavi:   4.7.0-amd64-ta-in-pallavineural
+  #   TTS Marathi Aarohi:  4.7.0-amd64-mr-in-aarohineural
+  # Note: new locales (ta-IN, mr-IN, te-IN, bn-IN, gu-IN, kn-IN, ml-IN, pa-IN, ur-IN, ...)
+  # ship ONLY on 4.7.0. Prefer 4.7.0 unless you must pin an older en-US/hi-IN voice.
   tag: 5.3.0-amd64-en-us
   pullPolicy: IfNotPresent
   pullSecrets: []

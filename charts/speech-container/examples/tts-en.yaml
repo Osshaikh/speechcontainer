@@ -2,7 +2,7 @@ mode: tts
 
 image:
   # Voice: AvaNeural (en-US female). Latest tag verified on MCR.
-  tag: 4.6.0-amd64-en-us-avaneural
+  tag: 4.7.0-amd64-en-us-avaneural
 
 # Neural TTS minimum sizing per Microsoft Learn host-resource guidance.
 # Neural voices need more CPU + memory than STT for waveform synthesis.

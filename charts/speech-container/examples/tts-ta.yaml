@@ -2,7 +2,7 @@ mode: tts
 
 image:
   # Voice: PallaviNeural (ta-IN female). Other ta-IN voices: ValluvarNeural (male).
-  # Tamil TTS is published at a newer version line (4.7.0) than en-US/hi-IN (4.6.0).
+  # All TTS locales now standardize on 4.7.0. New locales (ta, mr, te, bn, gu, kn, ml, pa, ur, ...) ship ONLY on 4.7.0.
   tag: 4.7.0-amd64-ta-in-pallavineural
 
 # Neural TTS minimum sizing per Microsoft Learn host-resource guidance.

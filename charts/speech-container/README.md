@@ -6,7 +6,7 @@ Replaces the abandoned `microsoft/cognitive-services-speech-onpremise` chart (v0
 
 - **Chart repo**: `https://osshaikh.github.io/speechcontainer/`
 - **Source**: `https://github.com/Osshaikh/speechcontainer`
-- **App version**: 5.3.0 (STT) / 4.6.0+ (TTS — version varies by locale; see [image references](#image--documentation-references))
+- **App version**: 5.3.0 (STT) / 4.7.0 (TTS — current line; some legacy en-US/hi-IN voices also published on 4.6.0). New locales (ta-IN, mr-IN, te-IN, bn-IN, gu-IN, kn-IN, ml-IN, pa-IN, ur-IN, …) **ship only on 4.7.0** — always prefer 4.7.0 unless you have a specific reason to pin an older voice. See [image references](#image--documentation-references) and the [tag lookup helper](#tag-lookup-helper-before-installing-a-new-locale).
 - **Chart version**: 1.1.7
 - **Helm**: 3.10+ (Helm 4.x also tested and supported)
 
@@ -151,7 +151,7 @@ Chart 1.1.4 ships with **minimums** as the example request values; limits stay a
 |---|---|---|---|---|
 | **System** (`syspool`) | General purpose | 4 cores / 16 GB | Runs CoreDNS, ingress, addons | n/a |
 | **STT** (`sttpool`) | **Compute-optimized** | 16 cores / 32 GB | STT is CPU-bound | 2 pods/node safe (req 4c each) |
-| **TTS** (`ttspool`) | **Memory-optimized** | 16 cores / 128 GB | Neural voices need RAM | 2 pods/node safe (req 6c / 12Gi each) |
+| **TTS** (`ttspool`) | **Memory-optimized** | 16 cores / 128 GB | Neural voices need RAM | 2 pods/node safe (req 6c / 12Gi each) — **1 node per 2 language containers** |
 
 ### Per-pod throughput
 
@@ -506,7 +506,7 @@ All values configurable via `--set`, `--set-json`, or `-f values.yaml`.
 | Key | Default | Notes |
 |---|---|---|
 | `image.repository` | *(set per mode in examples)* | `mcr.microsoft.com/azure-cognitive-services/speechservices/speech-to-text` or `…/neural-text-to-speech` |
-| `image.tag` | `5.3.0-amd64-en-us` (STT) / `4.6.0-amd64-en-us-avaneural` (TTS) | Locale-specific image tag |
+| `image.tag` | `5.3.0-amd64-en-us` (STT) / `4.7.0-amd64-en-us-avaneural` (TTS) | Locale-specific image tag |
 | `image.pullPolicy` | `IfNotPresent` | |
 | `imagePullSecrets` | `[]` | If using a private ACR mirror |
 
@@ -709,6 +709,28 @@ Locale codes follow BCP-47: `en-US`, `hi-IN`, `ta-IN`, `te-IN`, `mr-IN`, `bn-IN`
 
 > 💡 **Tip:** Open the MCR tags page for STT or TTS above to see every locale + version Microsoft has published. The TTS voice gallery lets you hear samples before picking a `<voice>neural` to deploy.
 
+> ⚠️ **TTS version stream — read this before adding any non-English/Hindi locale.** Microsoft publishes TTS images on **two parallel streams**: `4.6.0` (legacy — only some en-US and hi-IN voices) and `4.7.0` (current — all en-US, hi-IN, plus every Indic locale: `ta`, `mr`, `te`, `bn`, `gu`, `kn`, `ml`, `pa`, `ur`, …). **There is no `4.6.0` tag for ta-IN, mr-IN, te-IN, bn-IN, gu-IN, kn-IN, ml-IN, pa-IN, or ur-IN.** Always default to **`4.7.0`** for TTS unless you have a specific reason to pin an older en-US/hi-IN voice. Following an old `4.6.0` pattern for a new locale will cause `ImagePullBackOff`.
+
+### Tag lookup helper (before installing a new locale)
+
+Always confirm the exact tag exists on MCR before running `helm install`. This curl + jq snippet hits the MCR v2 registry API (no Docker needed, no workstation pull):
+
+```bash
+# TTS — list every tag for a locale (change mr-in to your target)
+TOKEN=$(curl -s "https://mcr.microsoft.com/oauth2/token?service=mcr.microsoft.com&scope=repository:azure-cognitive-services/speechservices/neural-text-to-speech:pull" | jq -r .access_token)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "https://mcr.microsoft.com/v2/azure-cognitive-services/speechservices/neural-text-to-speech/tags/list?n=5000" \
+  | jq -r '.tags[]' | grep -i mr-in | sort -u
+
+# STT — same idea, different repo
+TOKEN=$(curl -s "https://mcr.microsoft.com/oauth2/token?service=mcr.microsoft.com&scope=repository:azure-cognitive-services/speechservices/speech-to-text:pull" | jq -r .access_token)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "https://mcr.microsoft.com/v2/azure-cognitive-services/speechservices/speech-to-text/tags/list?n=5000" \
+  | jq -r '.tags[]' | grep -i mr-in | sort -u
+```
+
+The output is the definitive source of truth — copy the tag you need straight into `--set image.tag=...`.
+
 ### Example 11 — Tamil STT
 Use the ready-made `examples/stt-ta.yaml`:
 ```bash
@@ -765,7 +787,7 @@ helm install <RELEASE> speech-container/speech-container -n speech \
 
 ### Example 14 — Bulk install many languages
 ```bash
-# STT for English, Hindi, Tamil, Telugu, Marathi
+# STT for English, Hindi, Tamil, Telugu, Marathi (STT line is 5.3.0 for all locales)
 declare -A STT_LANGS=(
   [en]="5.3.0-amd64-en-us"
   [hi]="5.3.0-amd64-hi-in"
@@ -781,9 +803,28 @@ for lang in "${!STT_LANGS[@]}"; do
     --set image.tag=${STT_LANGS[$lang]} \
     --set ingress.path=/stt/$lang
 done
+
+# TTS for the same set (TTS line is 4.7.0 for ALL locales — including en/hi)
+declare -A TTS_LANGS=(
+  [en]="4.7.0-amd64-en-us-avaneural"
+  [hi]="4.7.0-amd64-hi-in-swaraneural"
+  [ta]="4.7.0-amd64-ta-in-pallavineural"
+  [te]="4.7.0-amd64-te-in-shrutineural"
+  [mr]="4.7.0-amd64-mr-in-aarohineural"
+)
+
+for lang in "${!TTS_LANGS[@]}"; do
+  helm install tts-$lang speech-container/speech-container -n speech \
+    -f examples/tts-en.yaml \
+    --set secretRef.enabled=true \
+    --set image.tag=${TTS_LANGS[$lang]} \
+    --set ingress.path=/tts/$lang
+done
 ```
 
-> ⚠️ Verify each image tag exists on MCR before installing — `docker pull <repo>:<tag>` from a workstation with MCR access is the fastest way. Container won't start if the tag is invalid.
+> ⚠️ **Verify each tag exists on MCR before installing.** Use the [tag lookup helper](#tag-lookup-helper-before-installing-a-new-locale) snippet above — it's faster and more reliable than `docker pull`, and it catches typos before you hit `ImagePullBackOff`.
+
+> 📦 **Capacity reminder for multi-language deployments.** Each language = one extra pod on `ttspool` (or `sttpool`). With chart defaults (6 CPU / 12 GiB TTS request) and a 16-core memory-optimized node, **only 2 TTS pods fit per node**. Planning for 4 TTS languages? Provision **at least 2 nodes in `ttspool` before installing**, otherwise the 3rd/4th pod will sit in `Pending` with `FailedScheduling: Insufficient cpu` (the `workload=tts:NoSchedule` taint prevents fallback to other pools by design). Rule of thumb: **`ceil(num_TTS_languages / 2)` ttspool nodes**, same math for STT.
 
 ---
 
@@ -822,7 +863,7 @@ curl -X POST "http://localhost:5002/cognitiveservices/v1" \
 curl http://localhost:5002/cognitiveservices/voices/list
 ```
 
-> 💡 **Note on `appVersion`**: The `Chart.yaml` `appVersion: "5.3.0"` tracks the **STT** image line. TTS uses an independent version stream (currently `4.6.0`). Each example file pins its own image tag — see the [image naming pattern](#image-naming-pattern) section for current versions per workload.
+> 💡 **Note on `appVersion`**: The `Chart.yaml` `appVersion: "5.3.0"` tracks the **STT** image line. TTS uses an independent version stream (currently `4.7.0`; some en-US/hi-IN voices are also still published on `4.6.0`). Each example file pins its own image tag — see the [image naming pattern](#image-naming-pattern) section for current versions per workload.
 
 ---
 
