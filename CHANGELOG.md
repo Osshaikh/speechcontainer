@@ -5,6 +5,16 @@ All notable changes to the `speech-container` Helm chart are documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.10] - 2026
+
+### Changed
+- **§"Network / firewall whitelisting" rewritten and expanded** (Prerequisite #2). Previous table was too thin to be actionable for security/network teams. New version splits egress into two clear categories:
+  - **A) Container pod egress** (mandatory) — now includes the regional Cognitive Services endpoint (`<region>.api.cognitive.microsoft.com`) alongside the resource endpoint (`<resource>.cognitiveservices.azure.com`), with explicit protocol/port columns, expanded "When required" cadence text (10–15 min for connected mode telemetry, every 7+ days for disconnected commitment renewal), and a worked example showing exactly which two FQDNs to whitelist for a sample resource.
+  - **B) Client-side egress** (only if callers use the Speech SDK) — documents the regional and resource-scoped `/sts/v1.0/issueToken` endpoints the SDK calls before hitting the container. Explicitly notes that raw REST/curl callers do not need this.
+- Added a "Concrete example" callout showing the exact two URLs (resource endpoint + regional endpoint) for a sample `myspeechres` / `centralindia` deployment, and pointing users to the Azure portal "Keys and Endpoint" blade as the source of truth for the resource URL.
+- Added an Azure Firewall / NSG guidance callout recommending **FQDN application rules** or the `CognitiveServicesManagement` Service Tag instead of brittle IP-based allowlists (Cognitive Services FQDNs sit behind Front Door, so IPs rotate).
+- Updated ACR mirror example to use 5.4.0 (current STT line) instead of stale 5.3.0.
+
 ## [1.1.9] - 2026
 
 ### Fixed (blocking for Telugu STT and any future per-locale STT drift)

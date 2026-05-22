@@ -250,20 +250,48 @@ Then activate the disconnected commitment via the Portal (Commitment Tiers blade
 
 ### 2. Network / firewall whitelisting
 
-Disconnected containers need network access only at specific moments. Egress rules:
+Disconnected containers need network access only at specific moments. There are **two categories** of egress to whitelist:
 
-| Endpoint | Port | Purpose | When required |
+#### A) Container pod egress (mandatory)
+
+These are calls the **Speech pods themselves** make outbound from your AKS/K8s cluster. Whitelist these on your egress firewall / NAT gateway / Azure Firewall / NSG.
+
+| Endpoint | Protocol / Port | Purpose | When required |
 |---|---|---|---|
-| `mcr.microsoft.com` | 443 | Container image registry | First pull only — cache after |
-| `*.data.mcr.microsoft.com` | 443 | Image blob backing store | First pull only |
-| `<resource>.cognitiveservices.azure.com` | 443 | License activation + periodic call-home | **Always** (every 7 days max) |
-| Cluster API server | 443 | Standard Kubernetes egress | Always (managed by your platform) |
+| `mcr.microsoft.com` | HTTPS 443 | Container image registry — pulls `speech-to-text` and `neural-text-to-speech` manifests | **First pull only** (cache after). Skip entirely if you mirror to ACR — see callout below. |
+| `*.data.mcr.microsoft.com` | HTTPS 443 | MCR blob backing store (actual image layers) | First pull only |
+| `https://<resource>.cognitiveservices.azure.com/` ← **your Speech resource endpoint** (Azure portal → Speech resource → "Keys and Endpoint" → "Endpoint", e.g. `https://myspeechres.cognitiveservices.azure.com/`) | HTTPS 443 | (1) License/key validation on pod startup (`/billing` POST); (2) usage meter upload. **This is the URL you pass as the `Billing=` container arg / `billing` secret field.** | **Connected mode:** Every 10–15 minutes for meter telemetry. **Disconnected mode:** Every commitment renewal window (default 7 days, configurable up to monthly via the commitment tier). Pod refuses to start if unreachable on first boot in either mode. |
+| `https://<region>.api.cognitive.microsoft.com/` ← e.g. `eastus.api.cognitive.microsoft.com`, `centralindia.api.cognitive.microsoft.com`, `swedencentral.api.cognitive.microsoft.com` | HTTPS 443 | **Some** STT model variants make region-scoped backend calls during initialization (depends on locale / model version). Also used by the container if you've enabled cloud-fallback or hybrid features. | Always allow for the **region your Speech resource lives in** — Azure portal → Speech resource → "Overview" → "Location". Safe to scope to just that one region. |
+| Cluster API server (`*.<region>.azmk8s.io` on AKS) | HTTPS 443 | Standard Kubernetes control-plane egress | Always (handled by your AKS managed VNet by default) |
 
-**Minimum production firewall rules** = only `<resource>.cognitiveservices.azure.com:443` (after the image is cached locally or in a private registry mirror).
+> 🔑 **Concrete example** — if your Speech resource is named `myspeechres` in `centralindia`, the two mandatory FQDNs to whitelist (besides MCR) are:
+> ```
+> https://myspeechres.cognitiveservices.azure.com/      ← resource endpoint (billing + license)
+> https://centralindia.api.cognitive.microsoft.com/     ← regional service endpoint
+> ```
+> The resource endpoint URL is **exactly** the value you'll set as the `Billing` arg / `billing` secret field. Copy it straight from the portal's "Keys and Endpoint" blade — don't construct it manually.
+
+**Minimum production firewall rule set** (after first image pull is cached in a private registry):
+- `<resource>.cognitiveservices.azure.com:443` — outbound, always
+- `<region>.api.cognitive.microsoft.com:443` — outbound, always
+- (No MCR needed if you mirrored to ACR.)
 
 **No inbound from the public internet is required** unless you expose ingress externally.
 
-> 💡 **AKS:** Mirror the Speech images into Azure Container Registry (ACR) for air-gapped clusters — `az acr import --source mcr.microsoft.com/azure-cognitive-services/speechservices/speech-to-text:5.3.0-amd64-en-us`. Override `image.repository` at install time to pull from ACR.
+#### B) Client-side egress (only if your callers use the Speech SDK)
+
+If applications calling your container go through the **Microsoft Speech SDK** (Python/C#/JS/Java/Go `azure-cognitiveservices-speech`), the SDK itself performs a key-to-bearer-token swap against Azure **before** hitting your container. The SDK process — wherever it runs (your call-center app, agent, gateway) — needs egress to:
+
+| Endpoint | Protocol / Port | Purpose | When required |
+|---|---|---|---|
+| `https://<region>.api.cognitive.microsoft.com/sts/v1.0/issueToken` | HTTPS 443 | SDK exchanges Speech key → 10-minute JWT before opening a session against your container | Only if SDK-based callers; **not** required for raw REST/`curl` callers |
+| `https://<resource>.cognitiveservices.azure.com/sts/v1.0/issueToken` | HTTPS 443 | Same as above, resource-scoped variant used by newer SDK versions | Same condition |
+
+If all your callers hit the container via raw HTTP (curl, REST, your own thin client), **section B is not needed** — the container itself validates the key locally and the SDK token dance is bypassed.
+
+> 💡 **AKS:** Mirror the Speech images into Azure Container Registry (ACR) for air-gapped clusters — `az acr import --source mcr.microsoft.com/azure-cognitive-services/speechservices/speech-to-text:5.4.0-amd64-en-us --name <acr> --image speechservices/speech-to-text:5.4.0-amd64-en-us`. Override `image.repository=<acr>.azurecr.io/speechservices/speech-to-text` at install time. After this, MCR egress is no longer required — only `<resource>.cognitiveservices.azure.com` and `<region>.api.cognitive.microsoft.com` remain.
+
+> 🔒 **Azure Firewall / NSG users:** Cognitive Services FQDNs sit behind Front Door, so IP-based allowlists are brittle. Use **FQDN-based application rules** in Azure Firewall, or **Service Tags** (`CognitiveServicesManagement`) for NSG. The Service Tag covers both `*.cognitiveservices.azure.com` and `*.api.cognitive.microsoft.com` across all regions in a single rule.
 
 ### 3. Node pools, taints & labels (split-pool pattern)
 
