@@ -128,6 +128,33 @@ ingress:
     enabled: false
     secretName: ""                    # name of pre-existing TLS secret (cert-manager or BYO)
 
+# ---- Gateway API (alternative to ingress) ------------------------------------
+# Use this for Application Gateway for Containers (AGC) on AKS, or any
+# Gateway API-compliant controller (Envoy Gateway, Cilium Gateway, Contour, etc.).
+# Mutually exclusive with `ingress.enabled`. Renders an HTTPRoute that attaches
+# to a pre-existing Gateway resource you (or the platform) manage.
+#
+# Why this exists: ingress-nginx is in maintenance mode and Kubernetes is moving
+# to Gateway API. On AKS, AGC is the strategic replacement and speaks Gateway
+# API natively (not Ingress).
+gatewayApi:
+  enabled: false
+  # Parent Gateway resource — must be pre-created in your cluster.
+  # For AGC: the ALB Controller provisions this from an ApplicationLoadBalancer CR.
+  parentRef:
+    name: ""                          # e.g. speech-gateway
+    namespace: ""                     # leave blank to use the release namespace
+    sectionName: ""                   # optional: listener name on the Gateway
+  hostname: speech.example.com        # FQDN matched on the parent Gateway listener
+  path: ""                            # REQUIRED per release (e.g. /stt/en-US) — same semantics as ingress.path
+  # HTTPRoute timeouts (Gateway API v1.1+) — long for STT streaming sessions
+  timeouts:
+    request: "3600s"
+    backendRequest: "3600s"
+  # Extra annotations to put on the HTTPRoute (AGC-specific tuning, etc.)
+  annotations: {}
+    # alb.networking.azure.io/access-log: enabled
+
 # ---- pod scheduling ----------------------------------------------------------
 # Defaults are intentionally empty — chart stays environment-neutral.
 #

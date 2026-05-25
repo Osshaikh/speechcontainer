@@ -1,0 +1,54 @@
+{{- if and .Values.gatewayApi.enabled .Values.ingress.enabled -}}
+{{- fail "ingress.enabled and gatewayApi.enabled are mutually exclusive. Pick one routing layer per release (Ingress for nginx-style controllers, gatewayApi for Application Gateway for Containers / Envoy Gateway / any Gateway API implementation)." -}}
+{{- end -}}
+{{- if .Values.gatewayApi.enabled -}}
+{{- $svcName := include "speech-container.fullname" . -}}
+{{- $svcPort := .Values.service.port | int -}}
+{{- $path := .Values.gatewayApi.path | required "gatewayApi.path is required when gatewayApi.enabled=true (e.g. /stt/en-US)" -}}
+{{- $parentName := .Values.gatewayApi.parentRef.name | required "gatewayApi.parentRef.name is required (the parent Gateway resource — for AGC, this is the Gateway created by the ALB Controller)" -}}
+{{- $parentNs := default .Release.Namespace .Values.gatewayApi.parentRef.namespace -}}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ $svcName }}
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "speech-container.labels" . | nindent 4 }}
+  {{- with .Values.gatewayApi.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  parentRefs:
+    - name: {{ $parentName }}
+      namespace: {{ $parentNs }}
+      {{- with .Values.gatewayApi.parentRef.sectionName }}
+      sectionName: {{ . }}
+      {{- end }}
+  hostnames:
+    - {{ .Values.gatewayApi.hostname | quote }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: {{ $path | quote }}
+      # Strip the language prefix before forwarding so the container sees its
+      # native URL structure (matches nginx-ingress rewrite-target behaviour).
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /
+      {{- with .Values.gatewayApi.timeouts }}
+      timeouts:
+        {{- if .request }}
+        request: {{ .request | quote }}
+        {{- end }}
+        {{- if .backendRequest }}
+        backendRequest: {{ .backendRequest | quote }}
+        {{- end }}
+      {{- end }}
+      backendRefs:
+        - name: {{ $svcName }}
+          port: {{ $svcPort }}
+{{- end }}

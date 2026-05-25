@@ -5,6 +5,31 @@ All notable changes to the `speech-container` Helm chart are documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026
+
+### Added — Gateway API support (Application Gateway for Containers on AKS)
+- **New routing mode: Gateway API `HTTPRoute`** via the `gatewayApi.*` value block in `values.yaml`. Mutually exclusive with the legacy `ingress.enabled=true` (chart fails fast at template time if both are enabled, with a clear error message).
+- **New template `templates/httproute.yaml`** — renders a Gateway API v1 `HTTPRoute` attached to a pre-existing parent Gateway, with:
+  - `PathPrefix` match on `gatewayApi.path` (same per-release semantics as `ingress.path`)
+  - `URLRewrite` filter (`ReplacePrefixMatch: /`) to strip the language prefix before forwarding — equivalent to nginx's `rewrite-target: /$2`
+  - `timeouts.request` / `timeouts.backendRequest` for long-running STT streaming sessions (Gateway API v1.1+)
+  - Backend ref to the chart's existing Service on its existing port
+- **New example overlay `examples/agc-overrides.yaml`** — drop-in file that flips `ingress.enabled=false` and `gatewayApi.enabled=true`. Layer on top of any `stt-*.yaml` / `tts-*.yaml` example to deploy the same language container via AGC instead of nginx.
+
+### Added — README §5 rewritten as "Ingress controller (or Gateway API)"
+- Now presents both options side-by-side with a status table (nginx is "maintenance mode" / AGC is "recommended for AKS").
+- **§5a NGINX Ingress** — existing install path, unchanged.
+- **§5b Application Gateway for Containers (AGC) on AKS** — new section covering:
+  - Why migrate (ingress-nginx EOL, Gateway API direction)
+  - 5-step one-time cluster setup: Gateway API CRDs, register `Microsoft.ServiceNetworking` provider, install ALB Controller from MCR Helm registry, create `ApplicationLoadBalancer` CR, create parent `Gateway` resource with HTTPS listener
+  - Per-release install commands using `-f examples/agc-overrides.yaml`
+  - Verification (`kubectl get httproute`, curl through AGC frontend)
+  - **Feature parity table** showing how each nginx capability (path rewrite, timeouts, body size, WebSocket, TLS, hostname multiplexing) maps to the HTTPRoute / Gateway model
+  - Migration tip: run both controllers in parallel during cutover
+
+### Why this matters
+- `ingress-nginx` was placed in maintenance mode by the Kubernetes community and will be sunset. On AKS, Microsoft's strategic replacement is Application Gateway for Containers (AGC), which speaks Gateway API natively. This release lets the chart serve both worlds without forking: existing nginx users keep working unchanged; new AKS deployments can adopt AGC by adding a single `-f agc-overrides.yaml` overlay.
+
 ## [1.1.10] - 2026
 
 ### Changed

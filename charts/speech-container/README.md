@@ -52,7 +52,7 @@ The chart targets **standard Kubernetes APIs** (Deployment, Service, Ingress, Se
 **Required versions:**
 - Kubernetes ≥ **1.27**
 - Helm ≥ **3.10** (Helm 4.x also tested and supported)
-- An ingress controller (chart examples assume `ingress-nginx`, but any controller works)
+- An ingress controller **or** Gateway API implementation (chart examples assume `ingress-nginx`; **AGC** is recommended for AKS — see §5)
 
 > 💡 **Why AKS gets special guidance:** This chart originated for Azure customers running disconnected Speech in regulated environments. AKS-specific sections (Key Vault CSI driver, Workload Identity, ACR mirror) are flagged with **AKS** callouts; everything else is platform-neutral.
 
@@ -483,9 +483,22 @@ helm install stt-en speech-container/speech-container -n speech \
 
 </details>
 
-### 5. Ingress controller
+### 5. Ingress controller (or Gateway API)
 
-The chart's example values enable an Ingress resource per release for hostname-based routing (e.g. `speech.example.com/stt/en-US`). Install `ingress-nginx` once per cluster before installing the speech chart:
+The chart supports **two mutually exclusive** routing layers per release:
+
+| Layer | When to use | Status |
+|---|---|---|
+| **`Ingress`** (nginx, traefik, …) | Any K8s cluster with a legacy ingress controller. Works today on AKS, EKS, GKE, OpenShift, vanilla. | ⚠️ `ingress-nginx` is in **maintenance mode** — Kubernetes is moving to Gateway API. Fine to use today; plan migration. |
+| **`HTTPRoute`** (Gateway API) | AKS + **Application Gateway for Containers (AGC)**, or any Gateway API implementation (Envoy Gateway, Cilium, Contour, etc.) | ✅ Recommended for new AKS deployments. AGC is Microsoft's strategic L7 for AKS and speaks Gateway API natively. |
+
+Pick **one** per release: `ingress.enabled=true` **OR** `gatewayApi.enabled=true`. The chart fails fast at template time if you accidentally enable both.
+
+---
+
+#### 5a. Option 1 — NGINX Ingress (legacy, still works)
+
+Install `ingress-nginx` once per cluster before installing the speech chart:
 
 ```bash
 helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
@@ -498,6 +511,126 @@ After install, capture the external IP and point your DNS (or `/etc/hosts` for t
 ```bash
 kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
 ```
+
+The `examples/stt-*.yaml` and `examples/tts-*.yaml` files default to `ingress.enabled=true`. No further configuration needed.
+
+---
+
+#### 5b. Option 2 — Application Gateway for Containers (AGC) on AKS
+
+**Why migrate:** `ingress-nginx` is in maintenance mode and Kubernetes upstream is moving to the **Gateway API**. AGC is Microsoft's managed, Azure-native L7 load balancer for AKS — it implements Gateway API directly (no nginx pods, no controller VMs to patch, native HTTP/2 + WebSocket + gRPC + per-route timeouts).
+
+**One-time cluster setup** (do this once, not per language container):
+
+```bash
+# 1. Enable Gateway API CRDs on your AKS cluster (if not already present)
+kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.1.0/standard-install.yaml
+
+# 2. Register the AGC resource provider on your subscription
+az provider register --namespace Microsoft.ServiceNetworking
+
+# 3. Install the ALB Controller (Microsoft Helm chart on MCR)
+helm install alb-controller \
+  oci://mcr.microsoft.com/application-lb/charts/alb-controller \
+  --version 1.0.0 \
+  --namespace azure-alb-system --create-namespace \
+  --set albController.podIdentity.clientID=<workload-identity-client-id>
+
+# 4. Create an ApplicationLoadBalancer custom resource (provisions the actual AGC resource in Azure)
+kubectl apply -f - <<'EOF'
+apiVersion: alb.networking.azure.io/v1
+kind: ApplicationLoadBalancer
+metadata:
+  name: speech-alb
+  namespace: speech
+spec:
+  associations:
+    - <subnet-id-of-an-AGC-delegated-subnet>
+EOF
+
+# 5. Create the parent Gateway resource (HTTPS listener with TLS, hostname your DNS points at)
+kubectl apply -f - <<'EOF'
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: speech-gateway
+  namespace: speech
+  annotations:
+    alb.networking.azure.io/alb-namespace: speech
+    alb.networking.azure.io/alb-name: speech-alb
+spec:
+  gatewayClassName: azure-alb-external
+  listeners:
+    - name: https
+      protocol: HTTPS
+      port: 443
+      hostname: speech.example.com
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: speech-tls
+      allowedRoutes:
+        namespaces:
+          from: Same
+EOF
+
+# Verify the Gateway provisions an Azure AGC frontend IP/FQDN
+kubectl get gateway speech-gateway -n speech -o jsonpath='{.status.addresses[0].value}'
+```
+
+> 📚 **Authoritative AGC install docs:** https://learn.microsoft.com/azure/application-gateway/for-containers/quickstart-deploy-application-gateway-for-containers-alb-controller — follow the workload identity / managed identity path that matches your AKS cluster's identity model.
+
+**Per-release install** — layer the `agc-overrides.yaml` overlay on top of any language example:
+
+```bash
+# Pull the chart locally to get all example files
+helm pull speech-container/speech-container --untar
+ls speech-container/examples/
+# → agc-overrides.yaml is one of the files
+
+# STT Gujarati via AGC
+helm install stt-gu speech-container/speech-container -n speech \
+  -f speech-container/examples/stt-en.yaml \
+  -f speech-container/examples/agc-overrides.yaml \
+  --set secretRef.enabled=true \
+  --set image.tag=5.3.0-amd64-gu-in \
+  --set gatewayApi.path=/stt/gu-IN
+
+# TTS Gujarati via AGC
+helm install tts-gu speech-container/speech-container -n speech \
+  -f speech-container/examples/tts-en.yaml \
+  -f speech-container/examples/agc-overrides.yaml \
+  --set secretRef.enabled=true \
+  --set image.tag=4.7.0-amd64-gu-in-dhwanineural \
+  --set gatewayApi.path=/tts/gu-IN
+```
+
+The chart will render an `HTTPRoute` (instead of `Ingress`) that attaches to your `speech-gateway` and applies the same path-prefix → strip → backend logic. Verify:
+
+```bash
+kubectl get httproute -n speech
+# NAME                          HOSTNAMES                 AGE
+# stt-gu-speech-container       ["speech.example.com"]    2m
+# tts-gu-speech-container       ["speech.example.com"]    1m
+
+# Test through AGC's frontend FQDN
+curl https://speech.example.com/tts/gu-IN/cognitiveservices/voices/list
+```
+
+**Feature parity vs nginx Ingress:**
+
+| Capability | nginx Ingress | AGC HTTPRoute | How chart handles it |
+|---|---|---|---|
+| Path-prefix routing | `path: /stt/en-US(/|$)(.*)` regex | `matches.path.type: PathPrefix` | ✅ Both supported |
+| Strip prefix before backend | `rewrite-target: /$2` annotation | `URLRewrite` filter with `ReplacePrefixMatch: /` | ✅ Both render automatically |
+| Long-call timeouts (STT streaming) | `proxy-read-timeout`, `proxy-send-timeout` annotations | `timeouts.request`, `timeouts.backendRequest` | ✅ Configurable via `gatewayApi.timeouts` |
+| Large SSML body | `proxy-body-size` annotation | No limit (AGC handles natively) | ✅ Implicit on AGC |
+| WebSocket upgrade | Auto on nginx | Auto on AGC | ✅ Both |
+| TLS termination | `tls:` block in Ingress | Configured on parent `Gateway` listener | ⚠️ Move TLS config to Gateway (one place, not per route) |
+| Hostname multiplexing | `host:` per Ingress | `hostnames:` per HTTPRoute attached to a Gateway listener | ✅ Both |
+
+**Migration tip:** you can run BOTH controllers in the same cluster during cutover — keep nginx-ingress for existing releases and install new ones via `agc-overrides.yaml`. Once all releases are migrated, uninstall `ingress-nginx`.
 
 ---
 
@@ -521,7 +654,7 @@ helm install stt-en speech-container/speech-container \
 To grab the example value files without cloning the repo:
 ```bash
 helm pull speech-container/speech-container --untar
-ls speech-container/examples/   # stt-en.yaml, stt-hi.yaml, stt-ta.yaml, tts-en.yaml, tts-hi.yaml, tts-ta.yaml, prod-overrides.yaml
+ls speech-container/examples/   # stt-en.yaml, stt-hi.yaml, stt-ta.yaml, tts-en.yaml, tts-hi.yaml, tts-ta.yaml, prod-overrides.yaml, agc-overrides.yaml
 ```
 
 ---

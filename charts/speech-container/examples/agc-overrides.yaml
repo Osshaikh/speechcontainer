@@ -1,0 +1,40 @@
+# =============================================================================
+#  Example: Application Gateway for Containers (AGC) on AKS
+# -----------------------------------------------------------------------------
+#  Use this overlay INSTEAD of the nginx Ingress block when you've installed
+#  the ALB Controller + provisioned an ApplicationLoadBalancer + Gateway on
+#  your AKS cluster. Layer on top of any stt-*.yaml / tts-*.yaml example:
+#
+#    helm install stt-en speech-container/speech-container -n speech \
+#      -f examples/stt-en.yaml \
+#      -f examples/agc-overrides.yaml \
+#      --set gatewayApi.path=/stt/en-US \
+#      --set secretRef.enabled=true
+#
+#  Pre-requisites (one-time, cluster-wide):
+#    1. Install Application Gateway for Containers ALB Controller via Helm
+#       (see chart README §5 — "Application Gateway for Containers (AGC) on AKS")
+#    2. Create the ApplicationLoadBalancer custom resource
+#    3. Create the parent Gateway resource (HTTP and/or HTTPS listener)
+#    4. Set `gatewayApi.parentRef.name` (and namespace) to that Gateway
+# =============================================================================
+
+# Turn OFF the legacy nginx Ingress that ships in the stt-*/tts-* examples
+ingress:
+  enabled: false
+
+# Turn ON the Gateway API HTTPRoute
+gatewayApi:
+  enabled: true
+  parentRef:
+    name: speech-gateway              # rename to match your Gateway resource
+    namespace: speech                 # namespace where the Gateway lives
+    # sectionName: https              # optional: pin to a specific Gateway listener
+  hostname: speech.example.com        # must match a hostname allowed by the Gateway listener
+  # path: set per release via --set gatewayApi.path=/stt/<locale> or /tts/<locale>
+  timeouts:
+    request: "3600s"                  # AGC supports per-route timeouts (Gateway API v1.1+)
+    backendRequest: "3600s"
+  annotations: {}
+    # AGC-specific tuning (uncomment as needed)
+    # alb.networking.azure.io/access-log: enabled
