@@ -5,6 +5,16 @@ All notable changes to the `speech-container` Helm chart are documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.6] - 2026
+
+### Removed — Trim README callouts per user request
+- **§2 (Network whitelisting):** removed the "No inbound from the public internet" line, the ACR-mirroring 💡 callout, and the 🔒 Azure Firewall / NSG Service Tag callout.
+- **§5b (AGC):** removed the introductory 💡 (Gateway API CRD bundling), 🔴 CRITICAL RBAC callout, 🟠 HIGH subnet-delegation callout, ⚠️ re-run idempotency callout, and ⚠️ "do not use 1.0.0" callout.
+- The corresponding **code/commands** in §5b (three role assignments, subnet delegation step, `1.10.28` version pin, namespace pre-step, provider registration poll, `$SUBNET_ID` lookup, `--resolve` smoke test) remain in place — only the narrative callout boxes were stripped.
+
+### Why
+User request to slim down the README narrative; the working install commands stay.
+
 ## [1.2.5] - 2026
 
 ### Added — §5b hardened based on fresh end-to-end install validation

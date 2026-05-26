@@ -202,12 +202,6 @@ Disconnected containers need network access only at specific moments. Whitelist 
 - `<region>.api.cognitive.microsoft.com:443` — outbound, always
 - (No MCR needed if you mirrored to ACR.)
 
-**No inbound from the public internet is required** unless you expose ingress externally.
-
-> 💡 **AKS:** Mirror the Speech images into Azure Container Registry (ACR) for air-gapped clusters — `az acr import --source mcr.microsoft.com/azure-cognitive-services/speechservices/speech-to-text:5.4.0-amd64-en-us --name <acr> --image speechservices/speech-to-text:5.4.0-amd64-en-us`. Override `image.repository=<acr>.azurecr.io/speechservices/speech-to-text` at install time. After this, MCR egress is no longer required — only `<resource>.cognitiveservices.azure.com` and `<region>.api.cognitive.microsoft.com` remain.
-
-> 🔒 **Azure Firewall / NSG users:** Cognitive Services FQDNs sit behind Front Door, so IP-based allowlists are brittle. Use **FQDN-based application rules** in Azure Firewall, or **Service Tags** (`CognitiveServicesManagement`) for NSG. The Service Tag covers both `*.cognitiveservices.azure.com` and `*.api.cognitive.microsoft.com` across all regions in a single rule.
-
 ### 3. Node pools, taints & labels (split-pool pattern)
 
 The chart's example values files (1.1.4+) expect two dedicated node pools — one for STT, one for TTS — each carrying a taint and matching label. Any nodepool name works; the values reference taints/labels, not pool names.
@@ -434,16 +428,6 @@ The `examples/stt-*.yaml` and `examples/tts-*.yaml` files default to `ingress.en
 #### 5b. Option 2 — Application Gateway for Containers (AGC) on AKS
 
 **One-time cluster setup** (do this once, not per language container). This follows the [official Microsoft Quickstart](https://learn.microsoft.com/azure/application-gateway/for-containers/quickstart-deploy-application-gateway-for-containers-alb-controller-helm) — refer to it for the latest ALB Controller chart version and any new prerequisites.
-
-> 💡 **Why no `kubectl apply ... gateway-api/standard-install.yaml`?** The Microsoft `alb-controller` Helm chart **bundles the Gateway API Standard channel CRDs** and applies them as part of `helm install`. You only need a separate CRD install on non-AGC implementations (Istio, Envoy Gateway, Cilium, NGINX Gateway Fabric, etc.).
-
-> 🔴 **CRITICAL — RBAC: the Reader role alone is NOT enough.** Many older guides (and earlier versions of this README) show only a Reader role assignment on the AKS node RG. With only that, `helm install` succeeds, controller pods come up Running, **but AGC never provisions** — the ApplicationLoadBalancer CR sits at `Deployment=InProgress` forever and the controller logs show `AuthorizationFailed: ... Microsoft.ServiceNetworking/trafficControllers/write`. You MUST also assign **AppGw for Containers Configuration Manager** (lets the controller create the traffic controller + associations) and **Network Contributor** scoped to the AGC subnet (lets the controller create the AGC frontend NIC in your subnet). Both are included in the snippet below.
-
-> 🟠 **HIGH — Subnet delegation is required and is NOT done automatically.** AGC needs its association subnet pre-delegated to `Microsoft.ServiceNetworking/trafficControllers`. The ALB Controller does NOT auto-delegate. Without delegation, the controller logs `AppGwForContainersAssociationSubnetNotDelegatedToTrafficController`. Step 4 below delegates the subnet before the ALB CR is applied. The subnet must also be (a) **/24 or larger**, (b) **empty** of other workloads, and (c) **in the same VNet as the AKS cluster** (peered VNets are not supported).
-
-> ⚠️ **Re-running after a failed install?** Several commands below are not idempotent (`az identity federated-credential create`, `az role assignment create` re-creates duplicates, `helm install` fails on existing release names). If you're cleaning up a partial install, delete the existing `azure-alb-identity` MI and its federated credential first, OR append `|| true` to the create commands.
-
-> ⚠️ **Do NOT use ALB chart `1.0.0`.** That release has a malformed `values.schema.json` (`json-pointer ... imagePullSecret not found`) that breaks both `helm install` (when omitting the imagePullSecret flag) and `helm upgrade --reuse-values`. Always use a recent version — the snippet below pins `1.10.28` as a known-good baseline. Check the [latest tag list on MCR](https://mcr.microsoft.com/artifact/mar/application-lb/charts/alb-controller/tags) for newer releases.
 
 ```bash
 # 0. Ensure the speech namespace exists (the ALB CR, TLS Secret, and Gateway all live in it)
