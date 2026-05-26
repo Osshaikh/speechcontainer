@@ -5,6 +5,28 @@ All notable changes to the `speech-container` Helm chart are documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.5] - 2026
+
+### Added — §5b hardened based on fresh end-to-end install validation
+Walked through the §5b runbook from scratch on a clean AKS cluster (`iitbombay-aks`) to deploy Gujarati STT + TTS via AGC. Identified gaps that produced confusing failures (controller installs successfully but AGC never provisions; subnet "not delegated" errors; smoke-test curl always fails without DNS). All findings folded back into §5b:
+
+**Critical fix — RBAC.** Reader role alone is insufficient. AGC provisioning silently fails with `AuthorizationFailed: Microsoft.ServiceNetworking/trafficControllers/write`. §5b now assigns three roles to the ALB Controller MI: (1) **Reader** on node RG, (2) **AppGw for Containers Configuration Manager** on node RG (so the controller can create/manage traffic controllers + associations), (3) **Network Contributor** scoped to the AGC subnet only (so the controller can create the AGC frontend NIC). Added a 🔴 CRITICAL callout above the bash block explaining the failure mode and how to spot it in logs.
+
+**High-severity fix — Subnet delegation.** AGC requires the association subnet to be pre-delegated to `Microsoft.ServiceNetworking/trafficControllers`. The ALB Controller does NOT auto-delegate. Without delegation, the controller logs `AppGwForContainersAssociationSubnetNotDelegatedToTrafficController` and association creation loops. §5b now has an explicit step 4 (`az network vnet subnet update --delegations Microsoft.ServiceNetworking/trafficControllers`) before the ApplicationLoadBalancer CR, plus a 🟠 HIGH callout enumerating subnet requirements (/24+, empty, same VNet as AKS — no peered VNets).
+
+**Medium-severity fix — ALB chart version.** Added explicit warning not to use ALB chart `1.0.0` (malformed `values.schema.json` makes `helm install` and `helm upgrade --reuse-values` both fail with `json-pointer ... imagePullSecret not found`). Kept `1.10.28` pin as known-good baseline with link to MCR tag list for newer releases.
+
+**Other improvements:**
+- Added step 0: `kubectl create namespace speech` (the ALB CR, TLS Secret, and Gateway all live in it).
+- Added active polling for `Microsoft.ServiceNetworking` registration state (provider registration is async; previous version of §5b moved straight to helm install which could race).
+- Replaced the `<subnet-id-of-an-AGC-delegated-subnet>` placeholder in the ApplicationLoadBalancer CR with `$SUBNET_ID` captured by the new step 4 lookup.
+- Added a smoke-test snippet under the per-release install section that uses `--resolve $AGC_FQDN` so the curl works before DNS is set up — previously the documented `curl https://speech.example.com/...` always failed for first-time users.
+- Added a note explaining why the Gujarati install commands reference `stt-en.yaml` / `tts-en.yaml` (they're locale-agnostic scheduling/resource templates; the image is overridden per-release).
+- Added a "re-running after a failed install" callout reminding users to delete leftover MI / federated credential before re-running the create commands.
+
+### Why
+The §5b runbook was technically complete but didn't surface the failure modes that block ~100% of first-time AGC installs — RBAC and subnet delegation. With these fixed, the runbook now matches what a clean end-to-end install actually requires.
+
 ## [1.2.4] - 2026
 
 ### Changed — §5b trimmed to prereqs + onboarding instructions only

@@ -437,13 +437,29 @@ The `examples/stt-*.yaml` and `examples/tts-*.yaml` files default to `ingress.en
 
 > 💡 **Why no `kubectl apply ... gateway-api/standard-install.yaml`?** The Microsoft `alb-controller` Helm chart **bundles the Gateway API Standard channel CRDs** and applies them as part of `helm install`. You only need a separate CRD install on non-AGC implementations (Istio, Envoy Gateway, Cilium, NGINX Gateway Fabric, etc.).
 
+> 🔴 **CRITICAL — RBAC: the Reader role alone is NOT enough.** Many older guides (and earlier versions of this README) show only a Reader role assignment on the AKS node RG. With only that, `helm install` succeeds, controller pods come up Running, **but AGC never provisions** — the ApplicationLoadBalancer CR sits at `Deployment=InProgress` forever and the controller logs show `AuthorizationFailed: ... Microsoft.ServiceNetworking/trafficControllers/write`. You MUST also assign **AppGw for Containers Configuration Manager** (lets the controller create the traffic controller + associations) and **Network Contributor** scoped to the AGC subnet (lets the controller create the AGC frontend NIC in your subnet). Both are included in the snippet below.
+
+> 🟠 **HIGH — Subnet delegation is required and is NOT done automatically.** AGC needs its association subnet pre-delegated to `Microsoft.ServiceNetworking/trafficControllers`. The ALB Controller does NOT auto-delegate. Without delegation, the controller logs `AppGwForContainersAssociationSubnetNotDelegatedToTrafficController`. Step 4 below delegates the subnet before the ALB CR is applied. The subnet must also be (a) **/24 or larger**, (b) **empty** of other workloads, and (c) **in the same VNet as the AKS cluster** (peered VNets are not supported).
+
+> ⚠️ **Re-running after a failed install?** Several commands below are not idempotent (`az identity federated-credential create`, `az role assignment create` re-creates duplicates, `helm install` fails on existing release names). If you're cleaning up a partial install, delete the existing `azure-alb-identity` MI and its federated credential first, OR append `|| true` to the create commands.
+
+> ⚠️ **Do NOT use ALB chart `1.0.0`.** That release has a malformed `values.schema.json` (`json-pointer ... imagePullSecret not found`) that breaks both `helm install` (when omitting the imagePullSecret flag) and `helm upgrade --reuse-values`. Always use a recent version — the snippet below pins `1.10.28` as a known-good baseline. Check the [latest tag list on MCR](https://mcr.microsoft.com/artifact/mar/application-lb/charts/alb-controller/tags) for newer releases.
+
 ```bash
+# 0. Ensure the speech namespace exists (the ALB CR, TLS Secret, and Gateway all live in it)
+kubectl create namespace speech --dry-run=client -o yaml | kubectl apply -f -
+
 # 1. Register the required resource providers and install the alb CLI extension
 az provider register --namespace Microsoft.ContainerService
 az provider register --namespace Microsoft.Network
 az provider register --namespace Microsoft.NetworkFunction
 az provider register --namespace Microsoft.ServiceNetworking
 az extension add --name alb
+
+# Poll until Microsoft.ServiceNetworking is fully Registered (the others are usually already on for AKS clusters)
+until [ "$(az provider show -n Microsoft.ServiceNetworking --query registrationState -o tsv)" = "Registered" ]; do
+  echo "Waiting for Microsoft.ServiceNetworking registration..."; sleep 20;
+done
 
 # 2. Ensure your AKS cluster has OIDC issuer + Workload Identity enabled (skip if already on)
 az aks update -g <rg> -n <aks-name> --enable-oidc-issuer --enable-workload-identity
@@ -462,7 +478,12 @@ sleep 60   # let Entra ID replicate before role assignment
 
 az role assignment create --assignee-object-id $PRINCIPAL_ID --assignee-principal-type ServicePrincipal \
   --scope $(az group show -n $mcRG --query id -o tsv) \
-  --role "acdd72a7-3385-48ef-bd42-f606fba81ae7"   # Reader
+  --role "acdd72a7-3385-48ef-bd42-f606fba81ae7"   # Reader (read AKS node RG resources)
+
+# 🔴 CRITICAL — also grant the controller permission to CREATE/UPDATE the AGC traffic controller resource.
+az role assignment create --assignee-object-id $PRINCIPAL_ID --assignee-principal-type ServicePrincipal \
+  --scope $(az group show -n $mcRG --query id -o tsv) \
+  --role "fbc52c3f-28ad-4303-a892-8a056630b8f1"   # AppGw for Containers Configuration Manager
 
 AKS_OIDC=$(az aks show -g $RESOURCE_GROUP -n $AKS_NAME --query oidcIssuerProfile.issuerUrl -o tsv)
 az identity federated-credential create --name $IDENTITY_NAME \
@@ -470,8 +491,24 @@ az identity federated-credential create --name $IDENTITY_NAME \
   --issuer "$AKS_OIDC" \
   --subject "system:serviceaccount:${CONTROLLER_NAMESPACE}:alb-controller-sa"
 
-# 4. Install the ALB Controller via Helm (this also installs the Gateway API CRDs automatically)
+# 4. 🟠 Delegate the AGC association subnet to Microsoft.ServiceNetworking/trafficControllers,
+#    and grant the MI Network Contributor on that subnet. Both are required for the AGC
+#    frontend NIC to provision into the subnet. Replace <vnet> and <subnet> with your values.
+VNET_NAME=<vnet-name>            # e.g. aks-vnet-xxxxxxxx (lives in the node RG by default)
+SUBNET_NAME=<subnet-name>        # e.g. aks-appgateway — dedicated /24+ subnet for AGC
+
+az network vnet subnet update -g $mcRG --vnet-name $VNET_NAME -n $SUBNET_NAME \
+  --delegations "Microsoft.ServiceNetworking/trafficControllers"
+
+SUBNET_ID=$(az network vnet subnet show -g $mcRG --vnet-name $VNET_NAME -n $SUBNET_NAME --query id -o tsv)
+
+az role assignment create --assignee-object-id $PRINCIPAL_ID --assignee-principal-type ServicePrincipal \
+  --scope $SUBNET_ID \
+  --role "4d97b98b-1d4f-4787-a291-c67834d212e7"   # Network Contributor (scoped to AGC subnet only)
+
+# 5. Install the ALB Controller via Helm (this also installs the Gateway API CRDs automatically)
 #    Check the latest chart version at: https://mcr.microsoft.com/artifact/mar/application-lb/charts/alb-controller/tags
+#    ⚠️ Do not use 1.0.0 — broken values.schema.json. 1.10.28 is the known-good baseline.
 helm install alb-controller \
   oci://mcr.microsoft.com/application-lb/charts/alb-controller \
   --version 1.10.28 \
@@ -483,8 +520,9 @@ helm install alb-controller \
 kubectl get pods -n azure-alb-system
 kubectl get gatewayclass azure-alb-external
 
-# 5. Create an ApplicationLoadBalancer custom resource (provisions the actual AGC resource in Azure)
-kubectl apply -f - <<'EOF'
+# 6. Create an ApplicationLoadBalancer custom resource (provisions the actual AGC resource in Azure).
+#    $SUBNET_ID was captured in step 4 above.
+kubectl apply -f - <<EOF
 apiVersion: alb.networking.azure.io/v1
 kind: ApplicationLoadBalancer
 metadata:
@@ -492,10 +530,15 @@ metadata:
   namespace: speech
 spec:
   associations:
-    - <subnet-id-of-an-AGC-delegated-subnet>
+    - $SUBNET_ID
 EOF
 
-# 6. Create the TLS Secret that the HTTPS listener will reference
+# Wait for the ALB CR to reach Deployment=True with reason=Succeeded (typically 3-5 minutes).
+# If it stays at Deployment=InProgress, check `kubectl logs -n azure-alb-system -l app=alb-controller`
+# for AuthorizationFailed (missing RBAC) or AppGwForContainersAssociationSubnetNotDelegated (missing
+# delegation) — the two most common bring-up failures.
+
+# 7. Create the TLS Secret that the HTTPS listener will reference
 #    Choose ONE of the three options below (dev / cert-manager / Azure Key Vault).
 
 # --- Option A (dev/test only): self-signed cert ---
@@ -533,7 +576,7 @@ EOF
 # Verify the Secret exists and is of type kubernetes.io/tls before creating the Gateway:
 kubectl get secret speech-tls -n speech -o jsonpath='{.type}'   # → kubernetes.io/tls
 
-# 7. Create the parent Gateway resource (HTTPS listener with TLS, hostname your DNS points at)
+# 8. Create the parent Gateway resource (HTTPS listener with TLS, hostname your DNS points at)
 kubectl apply -f - <<'EOF'
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
@@ -570,6 +613,8 @@ kubectl get gateway speech-gateway -n speech -o jsonpath='{.status.addresses[0].
 
 **Per-release install** — layer the `agc-overrides.yaml` overlay on top of any language example:
 
+> 💡 **Why does the Gujarati install reference `stt-en.yaml` / `tts-en.yaml`?** The `*-en.yaml` files are used as **base scheduling / resource templates** (CPU, memory, tolerations, affinity, HPA) — they're locale-agnostic. The locale-specific image is overridden at install time via `--set image.tag=...`. The chart does not ship a per-language example file; the `-en` files are simply the canonical STT/TTS base.
+
 ```bash
 # Pull the chart locally to get all example files
 helm pull speech-container/speech-container --untar
@@ -601,8 +646,14 @@ kubectl get httproute -n speech
 # stt-gu-speech-container       ["speech.example.com"]    2m
 # tts-gu-speech-container       ["speech.example.com"]    1m
 
-# Test through AGC's frontend FQDN
-curl https://speech.example.com/tts/gu-IN/cognitiveservices/voices/list
+# Smoke-test before DNS is set up: use --resolve to point speech.example.com at the AGC frontend
+AGC_FQDN=$(kubectl get gateway speech-gateway -n speech -o jsonpath='{.status.addresses[0].value}')
+AGC_IP=$(dig +short $AGC_FQDN | head -1)
+curl -k --resolve speech.example.com:443:$AGC_IP \
+  https://speech.example.com/tts/gu-IN/cognitiveservices/voices/list
+
+# (-k is needed only while you're using the Option A self-signed cert.
+#  Once DNS is set up: CNAME speech.example.com → $AGC_FQDN, then drop --resolve and -k.)
 ```
 
 ---
