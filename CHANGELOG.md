@@ -5,6 +5,16 @@ All notable changes to the `speech-container` Helm chart are documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.3] - 2026
+
+### Changed — Documentation reorganization
+- **Moved "Capacity planning" section from chart README to repo root README.** The full model (per-container resource requirements, recommended node families, per-pod throughput, sizing for a target call volume, reference sizing table up to 5M calls/month, tunable assumptions) now lives in the root `README.md` as a top-level section. The chart README retains a short pointer back to it. Rationale: capacity planning is platform-neutral and one of the first things a customer/architect evaluating the chart needs — surfacing it at the repo root makes it visible to anyone landing on the GitHub project page without having to open the chart subfolder.
+- **Removed Section B (Client-side SDK egress) from §2 "Network / firewall whitelisting".** The section was niche (only relevant if callers use the Speech SDK rather than raw REST) and the SDK-issued-token flow is documented thoroughly by Microsoft Learn upstream. Removing it keeps §2 focused on the mandatory container-pod egress that 100% of deployments need. The §2 anchor and TOC entry are unchanged so external links don't break.
+- **Removed "two categories" preamble and "A) Container pod egress (mandatory)" subheading** from §2 since there is now only one category. Section content (FQDN table, concrete example, minimum firewall rule set, ACR mirroring callout, Azure Firewall/NSG Service Tag callout) is preserved verbatim.
+
+### Why
+Both reorganizations are part of polishing the repo for client-facing review — making the high-value sizing model discoverable at the repo root, and trimming the firewall section to only the rules every deployment actually needs.
+
 ## [1.2.2] - 2026
 
 ### Fixed — AGC §5b TLS Secret prerequisite was missing

@@ -17,14 +17,14 @@ Replaces the abandoned `microsoft/cognitive-services-speech-onpremise` chart (v0
 1. [Platform compatibility](#platform-compatibility)
 2. [Quickstart](#quickstart)
 3. [Architecture overview](#architecture-overview)
-4. [Capacity planning](#capacity-planning)
+4. [Capacity planning](#capacity-planning) (full model lives in the [root README](../../README.md#capacity-planning))
 5. [Prerequisites](#prerequisites)
    - [Azure AI Speech resource](#1-azure-ai-speech-resource-billing-endpoint--api-key)
    - [Network / firewall whitelisting](#2-network--firewall-whitelisting)
    - [Node pools, taints & labels](#3-node-pools-taints--labels-split-pool-pattern)
    - [Speech credentials secret](#4-speech-credentials-secret)
    - [Azure Key Vault integration (AKS)](#azure-key-vault-integration-aks)
-   - [Ingress controller](#5-ingress-controller)
+   - [Ingress controller](#5-ingress-controller-or-gateway-api)
 6. [Installing the chart](#installing-the-chart)
 7. [Configurable values reference](#configurable-values-reference)
 8. [Install command examples](#install-command-examples)
@@ -132,79 +132,9 @@ For taints, ingress, capacity planning, and language-specific containers, read t
 
 ## Capacity planning
 
-Use these throughput figures (validated by Microsoft Speech engineering, confirmed against in-field deployments) to size your cluster for a target call volume.
-
-### Per-container resource requirements
-
-Microsoft Learn — disconnected container host sizing per pod:
-
-| Workload | **Minimum** | **Recommended** | Notes |
-|---|---|---|---|
-| **STT** (Speech-to-Text) | **4 cores / 4 GB** | **8 cores / 8 GB** | + 4–8 GB headroom for speech model load at startup |
-| **Neural TTS** | **6 cores / 12 GB** | **8 cores / 16 GB** | Larger voice models = more RAM; synthesis bursts at 16 GB |
-
-Chart 1.1.4 ships with **minimums** as the example request values; limits stay at the chart default `8c / 16Gi` so the container can burst to recommended sizing under load without rejection.
-
-### Recommended node families
-
-| Pool | Family | Sizing per node | Why | Density (1.1.4 requests) |
-|---|---|---|---|---|
-| **System** (`syspool`) | General purpose | 4 cores / 16 GB | Runs CoreDNS, ingress, addons | n/a |
-| **STT** (`sttpool`) | **Compute-optimized** | 16 cores / 32 GB | STT is CPU-bound | 2 pods/node safe (req 4c each) |
-| **TTS** (`ttspool`) | **Memory-optimized** | 16 cores / 128 GB | Neural voices need RAM | 2 pods/node safe (req 6c / 12Gi each) — **1 node per 2 language containers** |
-
-### Per-pod throughput
-
-| Workload | Concurrency rule | 8-core pod | Pod throughput @ 30s/call |
-|---|---|---|---|
-| **STT** | **2 sessions per CPU core** | 8 × 2 = **16 concurrent sessions** | 16 × (3600/30) = **1,920 calls/hour** |
-| **TTS** | **5 sessions per 8-core pod** | 5 concurrent sessions | 5 × (3600/30) = **600 calls/hour** |
-
-> Assumes **average call duration of 30 seconds** (typical for IVR/voicebot turns). Adjust proportionally for your real traffic mix.
-
-### Sizing for a target volume
-
-Worked example — **100,000 calls/month**:
-
-```
-Average load     = 100,000 calls / 30 days / 24 hr ≈ 139 calls/hour
-Peak load (3×)   ≈ 420 calls/hour during business-hour peaks
-```
-
-**STT pods needed:**
-```
-Peak calls / pod throughput = 420 / 1,920 ≈ 1 pod active at peak
-Recommended: 2 pods minimum  (HA + headroom for traffic spikes)
-```
-
-**TTS pods needed:**
-```
-Peak calls / pod throughput = 420 / 600 ≈ 1 pod active at peak
-Recommended: 2 pods minimum  (HA + headroom)
-```
-
-### Reference sizing table
-
-| Monthly calls | Peak calls/hr (3×) | STT pods (req 4c/4Gi) | TTS pods (req 6c/12Gi) | Min sttpool nodes | Min ttspool nodes |
-|---|---|---|---|---|---|
-| 10 k    | ~42   | 1 (+ 1 HA) | 1 (+ 1 HA) | 1 (compute-opt 16c)  | 1 (memory-opt 16c) |
-| 100 k   | ~420  | 2          | 2          | 2 (compute-opt 16c)  | 2 (memory-opt 16c) |
-| 500 k   | ~2,100| 2          | 4          | 2 (compute-opt 16c)  | 4 (memory-opt 16c) |
-| 1 M     | ~4,200| 3          | 7          | 3 (compute-opt 16c)  | 7 (memory-opt 16c) |
-| 5 M     | ~21 k | 11         | 35         | 11 (compute-opt 16c) | 35 (memory-opt 16c) |
-
-> Node count = pod count when using chart minimum requests (1 pod/node fits on a 16-core node with our 4c-STT / 6c-TTS requests — see [density math](#configurable-values-reference)).
-> Increase peak multiplier (× factor) if your traffic profile is spikier (e.g., 5× for retail flash events, 10× for emergency campaigns).
-
-### Tunable assumptions in this model
-
-| Variable | Default | Where to change |
-|---|---|---|
-| Average call duration | 30 s | Multiply formula by `(your_avg_seconds / 30)` |
-| STT concurrency/core | 2 sessions | `numberOfConcurrentRequest` env var (also `DECODER_MAX_COUNT`) |
-| TTS concurrency/8-core pod | 5 sessions | `numberOfConcurrentRequest` env var |
-| Peak-to-average ratio | 3× | Depends on traffic shape (BFSI ≈ 2×, retail ≈ 3–5×) |
-| HA replicas | +1 baseline | Maintain at least 2 pods per workload always |
+> 📊 **The full capacity planning model** — per-container resource requirements, recommended node families, per-pod throughput, sizing for a target call volume (worked example: 100k calls/month), reference sizing table up to 5M calls/month, and tunable assumptions — **lives in the repo root README → [Capacity planning](../../README.md#capacity-planning)**.
+>
+> It was moved out of the chart README to keep this guide focused on install/operate steps. The model itself is platform-neutral and applies whether you deploy on AKS, EKS, GKE, OpenShift, or vanilla Kubernetes.
 
 ---
 
@@ -250,11 +180,7 @@ Then activate the disconnected commitment via the Portal (Commitment Tiers blade
 
 ### 2. Network / firewall whitelisting
 
-Disconnected containers need network access only at specific moments. There are **two categories** of egress to whitelist:
-
-#### A) Container pod egress (mandatory)
-
-These are calls the **Speech pods themselves** make outbound from your AKS/K8s cluster. Whitelist these on your egress firewall / NAT gateway / Azure Firewall / NSG.
+Disconnected containers need network access only at specific moments. Whitelist these on your egress firewall / NAT gateway / Azure Firewall / NSG.
 
 | Endpoint | Protocol / Port | Purpose | When required |
 |---|---|---|---|
@@ -277,17 +203,6 @@ These are calls the **Speech pods themselves** make outbound from your AKS/K8s c
 - (No MCR needed if you mirrored to ACR.)
 
 **No inbound from the public internet is required** unless you expose ingress externally.
-
-#### B) Client-side egress (only if your callers use the Speech SDK)
-
-If applications calling your container go through the **Microsoft Speech SDK** (Python/C#/JS/Java/Go `azure-cognitiveservices-speech`), the SDK itself performs a key-to-bearer-token swap against Azure **before** hitting your container. The SDK process — wherever it runs (your call-center app, agent, gateway) — needs egress to:
-
-| Endpoint | Protocol / Port | Purpose | When required |
-|---|---|---|---|
-| `https://<region>.api.cognitive.microsoft.com/sts/v1.0/issueToken` | HTTPS 443 | SDK exchanges Speech key → 10-minute JWT before opening a session against your container | Only if SDK-based callers; **not** required for raw REST/`curl` callers |
-| `https://<resource>.cognitiveservices.azure.com/sts/v1.0/issueToken` | HTTPS 443 | Same as above, resource-scoped variant used by newer SDK versions | Same condition |
-
-If all your callers hit the container via raw HTTP (curl, REST, your own thin client), **section B is not needed** — the container itself validates the key locally and the SDK token dance is bypassed.
 
 > 💡 **AKS:** Mirror the Speech images into Azure Container Registry (ACR) for air-gapped clusters — `az acr import --source mcr.microsoft.com/azure-cognitive-services/speechservices/speech-to-text:5.4.0-amd64-en-us --name <acr> --image speechservices/speech-to-text:5.4.0-amd64-en-us`. Override `image.repository=<acr>.azurecr.io/speechservices/speech-to-text` at install time. After this, MCR egress is no longer required — only `<resource>.cognitiveservices.azure.com` and `<region>.api.cognitive.microsoft.com` remain.
 

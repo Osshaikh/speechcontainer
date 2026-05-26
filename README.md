@@ -28,7 +28,9 @@ helm install stt-en speech-container/speech-container -n speech \
   --set secretRef.name=speech-credentials
 ```
 
-Full installation guide, prerequisites (cluster sizing, network whitelisting, node pools), capacity planning for voice workloads, and `helm install` examples → **[charts/speech-container/README.md](charts/speech-container/README.md)**.
+Full installation guide, prerequisites (network whitelisting, node pools), and `helm install` examples → **[charts/speech-container/README.md](charts/speech-container/README.md)**.
+
+Voice-workload capacity planning (per-pod throughput, sizing for a target call volume, reference table up to 5M calls/month) → **[Capacity planning](#capacity-planning)** further down this README.
 
 ## What's in this repo
 
@@ -77,11 +79,91 @@ Want a different locale (Telugu, Marathi, Bengali, etc.)? See the **"Adding addi
 ## Prerequisites at a glance
 
 1. **Azure AI Speech resource** with disconnected commitment tier (S0 SKU + Commitment Tiers blade)
-2. **Kubernetes cluster** ≥ 1.27 with two node pools (sized per the [Capacity Planning](charts/speech-container/README.md#capacity-planning) section)
+2. **Kubernetes cluster** ≥ 1.27 with two node pools (sized per the [Capacity planning](#capacity-planning) section below)
 3. **Network egress** to `mcr.microsoft.com` and `<your-resource>.cognitiveservices.azure.com`
 4. **Helm** ≥ 3.10 and **kubectl** matching your cluster version
 
 > 💡 **AKS users:** A dedicated "Running on AKS" walkthrough is embedded in the chart README — Azure CLI commands for nodepools, taints, ACR mirroring, and Key Vault integration are all included.
+
+---
+
+## Capacity planning
+
+Use these throughput figures (validated by Microsoft Speech engineering, confirmed against in-field deployments) to size your cluster for a target call volume. The model is **platform-neutral** — applies whether you deploy on AKS, EKS, GKE, OpenShift, or vanilla Kubernetes.
+
+### Per-container resource requirements
+
+Microsoft Learn — disconnected container host sizing per pod:
+
+| Workload | **Minimum** | **Recommended** | Notes |
+|---|---|---|---|
+| **STT** (Speech-to-Text) | **4 cores / 4 GB** | **8 cores / 8 GB** | + 4–8 GB headroom for speech model load at startup |
+| **Neural TTS** | **6 cores / 12 GB** | **8 cores / 16 GB** | Larger voice models = more RAM; synthesis bursts at 16 GB |
+
+The chart ships with **minimums** as the example request values; limits stay at the chart default `8c / 16Gi` so the container can burst to recommended sizing under load without rejection.
+
+### Recommended node families
+
+| Pool | Family | Sizing per node | Why | Density (chart-default requests) |
+|---|---|---|---|---|
+| **System** (`syspool`) | General purpose | 4 cores / 16 GB | Runs CoreDNS, ingress, addons | n/a |
+| **STT** (`sttpool`) | **Compute-optimized** | 16 cores / 32 GB | STT is CPU-bound | 2 pods/node safe (req 4c each) |
+| **TTS** (`ttspool`) | **Memory-optimized** | 16 cores / 128 GB | Neural voices need RAM | 2 pods/node safe (req 6c / 12Gi each) — **1 node per 2 language containers** |
+
+### Per-pod throughput
+
+| Workload | Concurrency rule | 8-core pod | Pod throughput @ 30s/call |
+|---|---|---|---|
+| **STT** | **2 sessions per CPU core** | 8 × 2 = **16 concurrent sessions** | 16 × (3600/30) = **1,920 calls/hour** |
+| **TTS** | **5 sessions per 8-core pod** | 5 concurrent sessions | 5 × (3600/30) = **600 calls/hour** |
+
+> Assumes **average call duration of 30 seconds** (typical for IVR/voicebot turns). Adjust proportionally for your real traffic mix.
+
+### Sizing for a target volume
+
+Worked example — **100,000 calls/month**:
+
+```
+Average load     = 100,000 calls / 30 days / 24 hr ≈ 139 calls/hour
+Peak load (3×)   ≈ 420 calls/hour during business-hour peaks
+```
+
+**STT pods needed:**
+```
+Peak calls / pod throughput = 420 / 1,920 ≈ 1 pod active at peak
+Recommended: 2 pods minimum  (HA + headroom for traffic spikes)
+```
+
+**TTS pods needed:**
+```
+Peak calls / pod throughput = 420 / 600 ≈ 1 pod active at peak
+Recommended: 2 pods minimum  (HA + headroom)
+```
+
+### Reference sizing table
+
+| Monthly calls | Peak calls/hr (3×) | STT pods (req 4c/4Gi) | TTS pods (req 6c/12Gi) | Min sttpool nodes | Min ttspool nodes |
+|---|---|---|---|---|---|
+| 10 k    | ~42   | 1 (+ 1 HA) | 1 (+ 1 HA) | 1 (compute-opt 16c)  | 1 (memory-opt 16c) |
+| 100 k   | ~420  | 2          | 2          | 2 (compute-opt 16c)  | 2 (memory-opt 16c) |
+| 500 k   | ~2,100| 2          | 4          | 2 (compute-opt 16c)  | 4 (memory-opt 16c) |
+| 1 M     | ~4,200| 3          | 7          | 3 (compute-opt 16c)  | 7 (memory-opt 16c) |
+| 5 M     | ~21 k | 11         | 35         | 11 (compute-opt 16c) | 35 (memory-opt 16c) |
+
+> Node count = pod count when using chart minimum requests (1 pod/node fits on a 16-core node with our 4c-STT / 6c-TTS requests).
+> Increase peak multiplier (× factor) if your traffic profile is spikier (e.g., 5× for retail flash events, 10× for emergency campaigns).
+
+### Tunable assumptions in this model
+
+| Variable | Default | Where to change |
+|---|---|---|
+| Average call duration | 30 s | Multiply formula by `(your_avg_seconds / 30)` |
+| STT concurrency/core | 2 sessions | `numberOfConcurrentRequest` env var (also `DECODER_MAX_COUNT`) |
+| TTS concurrency/8-core pod | 5 sessions | `numberOfConcurrentRequest` env var |
+| Peak-to-average ratio | 3× | Depends on traffic shape (BFSI ≈ 2×, retail ≈ 3–5×) |
+| HA replicas | +1 baseline | Maintain at least 2 pods per workload always |
+
+---
 
 ## Contributing
 
