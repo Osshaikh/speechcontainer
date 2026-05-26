@@ -5,6 +5,20 @@ All notable changes to the `speech-container` Helm chart are documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.2] - 2026
+
+### Fixed — AGC §5b TLS Secret prerequisite was missing
+- **Added step 6: "Create the TLS Secret that the HTTPS listener will reference"** before the Gateway creation step. The prior README referenced `certificateRefs.name: speech-tls` in the Gateway listener but never told the reader how to create that Secret, so the Gateway would silently sit at `PROGRAMMED=False` with an `InvalidCertificateRef` reason.
+- **Three TLS options documented** so users can pick by environment:
+  - **Option A (dev/test)** — `openssl` self-signed cert + `kubectl create secret tls` one-liner.
+  - **Option B (production)** — cert-manager `Certificate` resource using a `ClusterIssuer` (Let's Encrypt or other ACME), with automatic rotation.
+  - **Option C (production, Azure-native)** — Azure Key Vault cert projected via the Secrets Store CSI driver, syncing into a `kubernetes.io/tls` Secret.
+- **Added TLS prerequisite reminder callout** below the Gateway block clarifying the smoke-test fallback (switch to HTTP listener, add HTTPS later as a Secret + listener change with no chart edit needed) and the DNS/SNI hostname matching requirement.
+- **Renumbered subsequent step** from 6 → 7 (Gateway creation now follows TLS Secret creation).
+
+### Why
+A peer following §5b end-to-end hit `PROGRAMMED=False` on the Gateway because the `speech-tls` Secret reference had no creation instructions anywhere in the README. The fix makes §5b genuinely production-grade by spelling out cert lifecycle ownership (manual, cert-manager, or Key Vault) explicitly.
+
 ## [1.2.1] - 2026
 
 ### Fixed — AGC §5b aligned with official Microsoft Quickstart

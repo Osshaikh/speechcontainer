@@ -582,7 +582,45 @@ spec:
     - <subnet-id-of-an-AGC-delegated-subnet>
 EOF
 
-# 6. Create the parent Gateway resource (HTTPS listener with TLS, hostname your DNS points at)
+# 6. Create the TLS Secret that the HTTPS listener will reference
+#    Choose ONE of the three options below (dev / cert-manager / Azure Key Vault).
+
+# --- Option A (dev/test only): self-signed cert ---
+# openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+#   -keyout tls.key -out tls.crt \
+#   -subj "/CN=speech.example.com" \
+#   -addext "subjectAltName=DNS:speech.example.com"
+# kubectl create secret tls speech-tls --cert=tls.crt --key=tls.key -n speech
+
+# --- Option B (production): cert-manager + Let's Encrypt (most common pattern) ---
+# After installing cert-manager and configuring a ClusterIssuer (e.g. letsencrypt-prod
+# with HTTP-01 or DNS-01 solver), create a Certificate resource — cert-manager will
+# populate the Secret named below automatically and rotate it before expiry:
+# kubectl apply -f - <<EOF
+# apiVersion: cert-manager.io/v1
+# kind: Certificate
+# metadata:
+#   name: speech-tls
+#   namespace: speech
+# spec:
+#   secretName: speech-tls            # ← Secret name referenced by the Gateway below
+#   issuerRef:
+#     name: letsencrypt-prod
+#     kind: ClusterIssuer
+#   dnsNames:
+#     - speech.example.com
+# EOF
+
+# --- Option C (production, Azure-native): Azure Key Vault cert via Secrets Store CSI driver ---
+# Enable on AKS once:  az aks enable-addons -g <rg> -n <aks> --addons azure-keyvault-secrets-provider
+# Then create a SecretProviderClass referencing your Key Vault cert and set
+# secretObjects[].secretName=speech-tls so the cert is projected as a kubernetes.io/tls Secret.
+# Reference docs: https://learn.microsoft.com/azure/aks/csi-secrets-store-driver
+
+# Verify the Secret exists and is of type kubernetes.io/tls before creating the Gateway:
+kubectl get secret speech-tls -n speech -o jsonpath='{.type}'   # → kubernetes.io/tls
+
+# 7. Create the parent Gateway resource (HTTPS listener with TLS, hostname your DNS points at)
 kubectl apply -f - <<'EOF'
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
@@ -612,6 +650,8 @@ EOF
 # Verify the Gateway provisions an Azure AGC frontend IP/FQDN
 kubectl get gateway speech-gateway -n speech -o jsonpath='{.status.addresses[0].value}'
 ```
+
+> 🔐 **TLS prerequisite reminder:** The HTTPS Gateway above will stay `PROGRAMMED=False` until the `speech-tls` Secret exists in the `speech` namespace (created in step 6). If you're just doing a quick smoke test and don't yet have a cert, switch the listener to `protocol: HTTP, port: 80` and drop the `tls:` block — then add HTTPS later as a Secret swap + listener change (no chart edit needed). After the Gateway shows `PROGRAMMED=True`, CNAME `speech.example.com` → the AGC frontend FQDN so the SNI in the TLS handshake matches the listener `hostname`.
 
 > 📚 **Authoritative AGC install docs:** https://learn.microsoft.com/azure/application-gateway/for-containers/quickstart-deploy-application-gateway-for-containers-alb-controller — follow the workload identity / managed identity path that matches your AKS cluster's identity model.
 
