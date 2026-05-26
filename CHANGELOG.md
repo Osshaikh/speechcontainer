@@ -5,6 +5,18 @@ All notable changes to the `speech-container` Helm chart are documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] - 2026
+
+### Fixed — AGC §5b aligned with official Microsoft Quickstart
+- **Removed misleading `kubectl apply ... gateway-api/standard-install.yaml` step** from §5b "One-time cluster setup". The Microsoft `alb-controller` Helm chart bundles the Gateway API Standard channel CRDs and applies them as part of `helm install`. A separate CRD install is only required for non-AGC Gateway API implementations (Istio, Envoy Gateway, Cilium, NGINX Gateway Fabric).
+- **Added the missing managed identity + federated credential setup** that the official Microsoft Quickstart requires (resource provider registration, `az extension add --name alb`, `az identity create`, Reader role on the node resource group, federated credential bound to `system:serviceaccount:azure-alb-system:alb-controller-sa`).
+- **Bumped ALB Controller chart version reference** from `1.0.0` to `1.10.28` (current at time of release) with a note pointing to MCR tags for users to check the latest.
+- **Added `--set albController.namespace=$CONTROLLER_NAMESPACE`** to the helm install command, matching the official documentation pattern.
+- **Added an explanatory callout** clarifying *why* the Gateway API CRDs don't need a separate install step on AGC.
+
+### Why
+A peer noticed the Microsoft official quickstart doesn't include the standalone Gateway API CRD install step, and asked why our README did. The step was a leftover from a generic Gateway API install pattern and was wrong specifically for AGC on AKS — the chart itself ships the CRDs.
+
 ## [1.2.0] - 2026
 
 ### Added — Gateway API support (Application Gateway for Containers on AKS)

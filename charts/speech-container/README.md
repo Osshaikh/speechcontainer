@@ -520,23 +520,57 @@ The `examples/stt-*.yaml` and `examples/tts-*.yaml` files default to `ingress.en
 
 **Why migrate:** `ingress-nginx` is in maintenance mode and Kubernetes upstream is moving to the **Gateway API**. AGC is Microsoft's managed, Azure-native L7 load balancer for AKS — it implements Gateway API directly (no nginx pods, no controller VMs to patch, native HTTP/2 + WebSocket + gRPC + per-route timeouts).
 
-**One-time cluster setup** (do this once, not per language container):
+**One-time cluster setup** (do this once, not per language container). This follows the [official Microsoft Quickstart](https://learn.microsoft.com/azure/application-gateway/for-containers/quickstart-deploy-application-gateway-for-containers-alb-controller-helm) — refer to it for the latest ALB Controller chart version and any new prerequisites.
+
+> 💡 **Why no `kubectl apply ... gateway-api/standard-install.yaml`?** The Microsoft `alb-controller` Helm chart **bundles the Gateway API Standard channel CRDs** and applies them as part of `helm install`. You only need a separate CRD install on non-AGC implementations (Istio, Envoy Gateway, Cilium, NGINX Gateway Fabric, etc.).
 
 ```bash
-# 1. Enable Gateway API CRDs on your AKS cluster (if not already present)
-kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.1.0/standard-install.yaml
-
-# 2. Register the AGC resource provider on your subscription
+# 1. Register the required resource providers and install the alb CLI extension
+az provider register --namespace Microsoft.ContainerService
+az provider register --namespace Microsoft.Network
+az provider register --namespace Microsoft.NetworkFunction
 az provider register --namespace Microsoft.ServiceNetworking
+az extension add --name alb
 
-# 3. Install the ALB Controller (Microsoft Helm chart on MCR)
+# 2. Ensure your AKS cluster has OIDC issuer + Workload Identity enabled (skip if already on)
+az aks update -g <rg> -n <aks-name> --enable-oidc-issuer --enable-workload-identity
+
+# 3. Create a managed identity for ALB Controller and federate it to the AKS service account
+RESOURCE_GROUP=<rg>
+AKS_NAME=<aks-name>
+IDENTITY_NAME=azure-alb-identity
+CONTROLLER_NAMESPACE=azure-alb-system
+
+mcRG=$(az aks show -g $RESOURCE_GROUP -n $AKS_NAME --query nodeResourceGroup -o tsv)
+az identity create -g $RESOURCE_GROUP -n $IDENTITY_NAME
+PRINCIPAL_ID=$(az identity show -g $RESOURCE_GROUP -n $IDENTITY_NAME --query principalId -o tsv)
+CLIENT_ID=$(az identity show -g $RESOURCE_GROUP -n $IDENTITY_NAME --query clientId -o tsv)
+sleep 60   # let Entra ID replicate before role assignment
+
+az role assignment create --assignee-object-id $PRINCIPAL_ID --assignee-principal-type ServicePrincipal \
+  --scope $(az group show -n $mcRG --query id -o tsv) \
+  --role "acdd72a7-3385-48ef-bd42-f606fba81ae7"   # Reader
+
+AKS_OIDC=$(az aks show -g $RESOURCE_GROUP -n $AKS_NAME --query oidcIssuerProfile.issuerUrl -o tsv)
+az identity federated-credential create --name $IDENTITY_NAME \
+  --identity-name $IDENTITY_NAME --resource-group $RESOURCE_GROUP \
+  --issuer "$AKS_OIDC" \
+  --subject "system:serviceaccount:${CONTROLLER_NAMESPACE}:alb-controller-sa"
+
+# 4. Install the ALB Controller via Helm (this also installs the Gateway API CRDs automatically)
+#    Check the latest chart version at: https://mcr.microsoft.com/artifact/mar/application-lb/charts/alb-controller/tags
 helm install alb-controller \
   oci://mcr.microsoft.com/application-lb/charts/alb-controller \
-  --version 1.0.0 \
-  --namespace azure-alb-system --create-namespace \
-  --set albController.podIdentity.clientID=<workload-identity-client-id>
+  --version 1.10.28 \
+  --namespace $CONTROLLER_NAMESPACE --create-namespace \
+  --set albController.namespace=$CONTROLLER_NAMESPACE \
+  --set albController.podIdentity.clientID=$CLIENT_ID
 
-# 4. Create an ApplicationLoadBalancer custom resource (provisions the actual AGC resource in Azure)
+# Verify controller is up and the GatewayClass is registered
+kubectl get pods -n azure-alb-system
+kubectl get gatewayclass azure-alb-external
+
+# 5. Create an ApplicationLoadBalancer custom resource (provisions the actual AGC resource in Azure)
 kubectl apply -f - <<'EOF'
 apiVersion: alb.networking.azure.io/v1
 kind: ApplicationLoadBalancer
@@ -548,7 +582,7 @@ spec:
     - <subnet-id-of-an-AGC-delegated-subnet>
 EOF
 
-# 5. Create the parent Gateway resource (HTTPS listener with TLS, hostname your DNS points at)
+# 6. Create the parent Gateway resource (HTTPS listener with TLS, hostname your DNS points at)
 kubectl apply -f - <<'EOF'
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
