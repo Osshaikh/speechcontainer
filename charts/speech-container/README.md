@@ -496,103 +496,41 @@ spec:
 EOF
 
 # 6. Create the TLS Secret that the HTTPS listener will reference
-#    Recommended pattern: self-signed cert stored in Azure Key Vault, projected into
-#    the speech namespace as a kubernetes.io/tls Secret via the Secrets Store CSI driver.
-#    No private key on local disk, no openssl on operator laptops, native cert rotation
-#    via Key Vault. The Gateway just references a Secret name — the source of truth
-#    stays in AKV.
+#    Choose ONE of the three options below (dev / cert-manager / Azure Key Vault).
 
-# 6.1  Enable the Azure Key Vault Secrets Store CSI driver on AKS (one-time)
-az aks enable-addons -g $RESOURCE_GROUP -n $AKS_NAME \
-  --addons azure-keyvault-secrets-provider
+# --- Option A (dev/test only): self-signed cert ---
+# openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+#   -keyout tls.key -out tls.crt \
+#   -subj "/CN=speech.example.com" \
+#   -addext "subjectAltName=DNS:speech.example.com"
+# kubectl create secret tls speech-tls --cert=tls.crt --key=tls.key -n speech
 
-# 6.2  Create (or reuse) a Key Vault and generate a self-signed cert for the hostname
-KV_NAME=<your-keyvault-name>        # must be globally unique
-HOSTNAME=speech.example.com
-az keyvault create -g $RESOURCE_GROUP -n $KV_NAME --enable-rbac-authorization true
+# --- Option B (production): cert-manager + Let's Encrypt (most common pattern) ---
+# After installing cert-manager and configuring a ClusterIssuer (e.g. letsencrypt-prod
+# with HTTP-01 or DNS-01 solver), create a Certificate resource — cert-manager will
+# populate the Secret named below automatically and rotate it before expiry:
+# kubectl apply -f - <<EOF
+# apiVersion: cert-manager.io/v1
+# kind: Certificate
+# metadata:
+#   name: speech-tls
+#   namespace: speech
+# spec:
+#   secretName: speech-tls            # ← Secret name referenced by the Gateway below
+#   issuerRef:
+#     name: letsencrypt-prod
+#     kind: ClusterIssuer
+#   dnsNames:
+#     - speech.example.com
+# EOF
 
-# Generate self-signed cert in AKV (CN + SAN both set to the listener hostname).
-# AKV stores the private key; this command never writes the key to disk.
-az keyvault certificate create --vault-name $KV_NAME -n speech-tls \
-  --policy "$(az keyvault certificate get-default-policy | \
-    jq --arg cn "CN=$HOSTNAME" --arg san "$HOSTNAME" \
-       '.x509CertificateProperties.subject=$cn |
-        .x509CertificateProperties.subjectAlternativeNames.dnsNames=[$san]')"
+# --- Option C (production, Azure-native): Azure Key Vault cert via Secrets Store CSI driver ---
+# Enable on AKS once:  az aks enable-addons -g <rg> -n <aks> --addons azure-keyvault-secrets-provider
+# Then create a SecretProviderClass referencing your Key Vault cert and set
+# secretObjects[].secretName=speech-tls so the cert is projected as a kubernetes.io/tls Secret.
+# Reference docs: https://learn.microsoft.com/azure/aks/csi-secrets-store-driver
 
-# 6.3  Grant the AKS kubelet identity Get access on AKV certs + secrets (RBAC mode)
-KUBELET_OID=$(az aks show -g $RESOURCE_GROUP -n $AKS_NAME \
-  --query identityProfile.kubeletidentity.objectId -o tsv)
-KV_ID=$(az keyvault show -g $RESOURCE_GROUP -n $KV_NAME --query id -o tsv)
-az role assignment create --assignee-object-id $KUBELET_OID \
-  --assignee-principal-type ServicePrincipal --scope $KV_ID \
-  --role "Key Vault Certificate User"
-az role assignment create --assignee-object-id $KUBELET_OID \
-  --assignee-principal-type ServicePrincipal --scope $KV_ID \
-  --role "Key Vault Secrets User"
-
-# 6.4  Create a SecretProviderClass that projects the AKV cert as a kubernetes.io/tls Secret
-TENANT_ID=$(az account show --query tenantId -o tsv)
-kubectl apply -f - <<EOF
-apiVersion: secrets-store.csi.x-k8s.io/v1
-kind: SecretProviderClass
-metadata:
-  name: speech-tls-spc
-  namespace: speech
-spec:
-  provider: azure
-  secretObjects:
-    - secretName: speech-tls               # ← the K8s Secret name the Gateway will reference
-      type: kubernetes.io/tls
-      data:
-        - objectName: speech-tls           # AKV cert name
-          key: tls.crt
-        - objectName: speech-tls
-          key: tls.key
-  parameters:
-    usePodIdentity: "false"
-    useVMManagedIdentity: "true"           # use the AKS kubelet MI (simplest)
-    userAssignedIdentityID: ""             # blank = kubelet identity
-    keyvaultName: "$KV_NAME"
-    tenantId: "$TENANT_ID"
-    objects: |
-      array:
-        - |
-          objectName: speech-tls
-          objectType: secret               # cert+key are exported via the "secret" form
-          objectAlias: speech-tls
-EOF
-
-# 6.5  Sync the Secret — CSI only materializes the Secret when a Pod actually mounts the SPC.
-#      Deploy a tiny long-running mounter Pod whose only job is to keep the projection alive.
-kubectl apply -f - <<'EOF'
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: speech-tls-syncer
-  namespace: speech
-spec:
-  replicas: 1
-  selector: { matchLabels: { app: speech-tls-syncer } }
-  template:
-    metadata: { labels: { app: speech-tls-syncer } }
-    spec:
-      containers:
-        - name: pause
-          image: mcr.microsoft.com/oss/kubernetes/pause:3.6
-          volumeMounts:
-            - name: tls
-              mountPath: /mnt/tls
-              readOnly: true
-      volumes:
-        - name: tls
-          csi:
-            driver: secrets-store.csi.k8s.io
-            readOnly: true
-            volumeAttributes:
-              secretProviderClass: speech-tls-spc
-EOF
-
-# 6.6  Verify the Secret was projected and is of type kubernetes.io/tls
+# Verify the Secret exists and is of type kubernetes.io/tls before creating the Gateway:
 kubectl get secret speech-tls -n speech -o jsonpath='{.type}'   # → kubernetes.io/tls
 
 # 7. Create the parent Gateway resource (HTTPS listener with TLS, hostname your DNS points at)
@@ -626,11 +564,7 @@ EOF
 kubectl get gateway speech-gateway -n speech -o jsonpath='{.status.addresses[0].value}'
 ```
 
-> 🔐 **TLS prerequisite reminder:** The HTTPS Gateway above will stay `PROGRAMMED=False` until the `speech-tls` Secret exists in the `speech` namespace (created in step 6 via the Key Vault CSI projection). If you're just doing a quick smoke test before AKV is set up, switch the listener to `protocol: HTTP, port: 80` and drop the `tls:` block — then come back and do the AKV wiring as a Secret swap + listener change (no chart edit needed). After the Gateway shows `PROGRAMMED=True`, CNAME `speech.example.com` → the AGC frontend FQDN so the SNI in the TLS handshake matches the listener `hostname`.
->
-> 🔁 **Cert rotation:** when you rotate the cert in Key Vault (`az keyvault certificate create` again, or via an AKV-managed lifecycle policy), the CSI driver re-projects on its sync interval (default 2 min) and the `speech-tls` Secret is updated in place. AGC picks up the new cert automatically on its next listener reload — no pod restarts, no Gateway re-apply.
->
-> 💡 **Alternative TLS sources** (not covered above to keep this guide focused): cert-manager with Let's Encrypt for public ACME-issued certs, or `kubectl create secret tls` from a manually-issued cert. Both produce the same `kubernetes.io/tls` Secret the Gateway references — the Gateway YAML never changes.
+> 🔐 **TLS prerequisite reminder:** The HTTPS Gateway above will stay `PROGRAMMED=False` until the `speech-tls` Secret exists in the `speech` namespace (created in step 6). If you're just doing a quick smoke test and don't yet have a cert, switch the listener to `protocol: HTTP, port: 80` and drop the `tls:` block — then add HTTPS later as a Secret swap + listener change (no chart edit needed). After the Gateway shows `PROGRAMMED=True`, CNAME `speech.example.com` → the AGC frontend FQDN so the SNI in the TLS handshake matches the listener `hostname`.
 
 > 📚 **Authoritative AGC install docs:** https://learn.microsoft.com/azure/application-gateway/for-containers/quickstart-deploy-application-gateway-for-containers-alb-controller — follow the workload identity / managed identity path that matches your AKS cluster's identity model.
 

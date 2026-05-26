@@ -5,18 +5,6 @@ All notable changes to the `speech-container` Helm chart are documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.2.5] - 2026
-
-### Changed — §5b TLS step now recommends Azure Key Vault + Secrets Store CSI driver as primary path
-- **Step 6 collapsed from "3 commented options" to one fully spelled-out recommended path**: self-signed cert generated **in Azure Key Vault**, projected into the `speech` namespace as a `kubernetes.io/tls` Secret via the Secrets Store CSI driver. The Gateway just references the Secret name — the source of truth stays in AKV.
-- **Six concrete sub-steps**: enable AKS Key Vault CSI addon, create AKV + self-signed cert with hostname SAN, grant the AKS kubelet identity `Key Vault Certificate User` + `Key Vault Secrets User` RBAC roles, apply a `SecretProviderClass` projecting the cert as a tls Secret, deploy a tiny mounter Deployment to materialize the Secret (CSI only syncs when a Pod mounts), verify the Secret type.
-- **Cert rotation callout added** — when AKV cert rotates, CSI re-projects on the sync interval, AGC picks it up on next listener reload, no pod restarts.
-- **cert-manager and manual openssl are mentioned as alternatives** in the reminder callout below the Gateway (one sentence) — not spelled out, since both produce the same Secret and the Gateway YAML doesn't change.
-- **No private key ever lands on operator laptops** — the `az keyvault certificate create` flow stores the key in AKV's HSM-backed store; CSI streams it into the pod's tmpfs volume on demand.
-
-### Why
-Per client recommendation: for an enterprise/production posture on AKS, AKV + CSI is the right TLS source of truth. The previous "3 equal options" approach made operators choose without guidance; the new structure presents one opinionated path with brief alternatives noted.
-
 ## [1.2.4] - 2026
 
 ### Changed — §5b trimmed to prereqs + onboarding instructions only
