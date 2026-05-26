@@ -5,6 +5,17 @@ All notable changes to the `speech-container` Helm chart are documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.4] - 2026
+
+### Changed — §5b trimmed to prereqs + onboarding instructions only
+- **Removed "Feature parity vs nginx Ingress" comparison table** (path-prefix routing, prefix stripping, timeouts, body size, WebSocket, TLS, hostname multiplexing rows) from end of §5b.
+- **Removed "Migration tip"** paragraph about running both controllers in parallel during cutover.
+- **Removed "Why migrate" marketing preamble** ("ingress-nginx is in maintenance mode... AGC is Microsoft's managed, Azure-native L7 load balancer...") from start of §5b.
+- §5b now contains exactly what's needed to onboard speech containers via AGC: one-time cluster setup steps (RP registration, MI + federated cred, ALB Controller helm install, ApplicationLoadBalancer CR, TLS Secret options, Gateway resource) followed by per-release `helm install` with `agc-overrides.yaml`. No comparative knowledge, no migration discussion.
+
+### Why
+The chart README is for operators onboarding the chart, not for evaluating ingress technologies. Comparison and migration content was clutter for the target reader (someone already committed to using AGC) and is better suited to a separate evaluation doc if needed.
+
 ## [1.2.3] - 2026
 
 ### Changed — Documentation reorganization

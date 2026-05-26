@@ -433,8 +433,6 @@ The `examples/stt-*.yaml` and `examples/tts-*.yaml` files default to `ingress.en
 
 #### 5b. Option 2 — Application Gateway for Containers (AGC) on AKS
 
-**Why migrate:** `ingress-nginx` is in maintenance mode and Kubernetes upstream is moving to the **Gateway API**. AGC is Microsoft's managed, Azure-native L7 load balancer for AKS — it implements Gateway API directly (no nginx pods, no controller VMs to patch, native HTTP/2 + WebSocket + gRPC + per-route timeouts).
-
 **One-time cluster setup** (do this once, not per language container). This follows the [official Microsoft Quickstart](https://learn.microsoft.com/azure/application-gateway/for-containers/quickstart-deploy-application-gateway-for-containers-alb-controller-helm) — refer to it for the latest ALB Controller chart version and any new prerequisites.
 
 > 💡 **Why no `kubectl apply ... gateway-api/standard-install.yaml`?** The Microsoft `alb-controller` Helm chart **bundles the Gateway API Standard channel CRDs** and applies them as part of `helm install`. You only need a separate CRD install on non-AGC implementations (Istio, Envoy Gateway, Cilium, NGINX Gateway Fabric, etc.).
@@ -606,20 +604,6 @@ kubectl get httproute -n speech
 # Test through AGC's frontend FQDN
 curl https://speech.example.com/tts/gu-IN/cognitiveservices/voices/list
 ```
-
-**Feature parity vs nginx Ingress:**
-
-| Capability | nginx Ingress | AGC HTTPRoute | How chart handles it |
-|---|---|---|---|
-| Path-prefix routing | `path: /stt/en-US(/|$)(.*)` regex | `matches.path.type: PathPrefix` | ✅ Both supported |
-| Strip prefix before backend | `rewrite-target: /$2` annotation | `URLRewrite` filter with `ReplacePrefixMatch: /` | ✅ Both render automatically |
-| Long-call timeouts (STT streaming) | `proxy-read-timeout`, `proxy-send-timeout` annotations | `timeouts.request`, `timeouts.backendRequest` | ✅ Configurable via `gatewayApi.timeouts` |
-| Large SSML body | `proxy-body-size` annotation | No limit (AGC handles natively) | ✅ Implicit on AGC |
-| WebSocket upgrade | Auto on nginx | Auto on AGC | ✅ Both |
-| TLS termination | `tls:` block in Ingress | Configured on parent `Gateway` listener | ⚠️ Move TLS config to Gateway (one place, not per route) |
-| Hostname multiplexing | `host:` per Ingress | `hostnames:` per HTTPRoute attached to a Gateway listener | ✅ Both |
-
-**Migration tip:** you can run BOTH controllers in the same cluster during cutover — keep nginx-ingress for existing releases and install new ones via `agc-overrides.yaml`. Once all releases are migrated, uninstall `ingress-nginx`.
 
 ---
 
