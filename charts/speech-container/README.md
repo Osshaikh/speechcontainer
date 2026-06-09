@@ -7,7 +7,7 @@ Replaces the abandoned `microsoft/cognitive-services-speech-onpremise` chart (v0
 - **Chart repo**: `https://osshaikh.github.io/speechcontainer/`
 - **Source**: `https://github.com/Osshaikh/speechcontainer`
 - **App version**: 5.3.0 (STT) / 4.7.0 (TTS — current line; some legacy en-US/hi-IN voices also published on 4.6.0). New locales (ta-IN, mr-IN, te-IN, bn-IN, gu-IN, kn-IN, ml-IN, pa-IN, ur-IN, …) **ship only on 4.7.0** — always prefer 4.7.0 unless you have a specific reason to pin an older voice. See [image references](#image--documentation-references) and the [tag lookup helper](#tag-lookup-helper-before-installing-a-new-locale).
-- **Chart version**: 1.1.7
+- **Chart version**: 1.2.8
 - **Helm**: 3.10+ (Helm 4.x also tested and supported)
 
 ---
@@ -52,7 +52,7 @@ The chart targets **standard Kubernetes APIs** (Deployment, Service, Ingress, Se
 **Required versions:**
 - Kubernetes ≥ **1.27**
 - Helm ≥ **3.10** (Helm 4.x also tested and supported)
-- An ingress controller **or** Gateway API implementation (chart examples assume `ingress-nginx`; **AGC** is recommended for AKS — see §5)
+- An ingress controller **or** Gateway API implementation (chart examples assume `ingress-nginx`; the chart also supports any Gateway API implementation via `gatewayApi.enabled` — see §5)
 
 > 💡 **Why AKS gets special guidance:** This chart originated for Azure customers running disconnected Speech in regulated environments. AKS-specific sections (Key Vault CSI driver, Workload Identity, ACR mirror) are flagged with **AKS** callouts; everything else is platform-neutral.
 
@@ -392,20 +392,13 @@ helm install stt-en speech-container/speech-container -n speech \
 
 </details>
 
-### 5. Ingress controller (or Gateway API)
+### 5. Ingress controller
 
-The chart supports **two mutually exclusive** routing layers per release:
-
-| Layer | When to use | Status |
-|---|---|---|
-| **`Ingress`** (nginx, traefik, …) | Any K8s cluster with a legacy ingress controller. Works today on AKS, EKS, GKE, OpenShift, vanilla. | ⚠️ `ingress-nginx` is in **maintenance mode** — Kubernetes is moving to Gateway API. Fine to use today; plan migration. |
-| **`HTTPRoute`** (Gateway API) | AKS + **Application Gateway for Containers (AGC)**, or any Gateway API implementation (Envoy Gateway, Cilium, Contour, etc.) | ✅ Recommended for new AKS deployments. AGC is Microsoft's strategic L7 for AKS and speaks Gateway API natively. |
-
-Pick **one** per release: `ingress.enabled=true` **OR** `gatewayApi.enabled=true`. The chart fails fast at template time if you accidentally enable both.
+The chart ships an NGINX Ingress example out of the box. The chart also exposes a `gatewayApi.enabled` flag for clusters running a Gateway API implementation (Envoy Gateway, Cilium, Contour, AGC, etc.) — see `values.yaml` for the schema; routing-layer setup for those controllers is out of scope for this README. Pick **one** per release: `ingress.enabled=true` **or** `gatewayApi.enabled=true`. The chart fails fast at template time if you accidentally enable both.
 
 ---
 
-#### 5a. Option 1 — NGINX Ingress (legacy, still works)
+#### NGINX Ingress setup
 
 Install `ingress-nginx` once per cluster before installing the speech chart:
 
@@ -423,9 +416,8 @@ kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.
 
 The `examples/stt-*.yaml` and `examples/tts-*.yaml` files default to `ingress.enabled=true`. No further configuration needed.
 
+
 ---
-
-
 
 ## Installing the chart
 
@@ -565,6 +557,76 @@ helm install stt-en speech-container/speech-container -n speech \
   --set secretRef.name=my-speech-secret \
   --set secretRef.billingKey=BillingUrl \
   --set secretRef.apiKeyKey=SubscriptionKey
+```
+
+### Example 4a — Hindi STT with custom Secret reference + custom CPU/memory
+
+End-to-end production install for a Hindi (hi-IN) STT release:
+- Credentials pulled from a Secret named `bfl-speech-creds` with non-default keys (`BILLING_URL` / `COG_KEY`)
+- Per-pod CPU/memory tuned tighter than chart defaults (Microsoft Learn min for STT: 4 CPU / 4 GB; here we use 6/8 with burst to 14 GB for the model load)
+- Service kept as ClusterIP for in-cluster apps; flip to `service.type=LoadBalancer` if a public IP is needed
+
+**Pre-req:** create the Secret once:
+```bash
+kubectl create secret generic bfl-speech-creds -n speech \
+  --from-literal=BILLING_URL="https://<your-speech-resource>.cognitiveservices.azure.com/" \
+  --from-literal=COG_KEY="<your-S0-key>"
+```
+
+**Install:**
+```bash
+helm install stt-hi speech-container/speech-container -n speech \
+  --version 1.2.7 \
+  --set mode=stt \
+  --set image.tag=5.4.0-amd64-hi-in \
+  --set secretRef.enabled=true \
+  --set secretRef.name=bfl-speech-creds \
+  --set secretRef.billingKey=BILLING_URL \
+  --set secretRef.apiKeyKey=COG_KEY \
+  --set resources.requests.cpu=6 \
+  --set resources.requests.memory=8Gi \
+  --set resources.limits.cpu=8 \
+  --set resources.limits.memory=14Gi \
+  --set concurrency.numberOfConcurrentRequest=5 \
+  --set service.type=ClusterIP \
+  --set ingress.enabled=false
+```
+
+### Example 4b — Hindi TTS (Neural voice) with custom Secret reference + custom CPU/memory
+
+Same Secret as 4a (or a different one). Neural TTS needs more RAM than STT — Microsoft Learn recommends 8 CPU / 16 GB; this example sets requests at 8/12 with limits at 8/16:
+
+```bash
+helm install tts-hi speech-container/speech-container -n speech \
+  --version 1.2.7 \
+  --set mode=tts \
+  --set image.tag=4.7.0-amd64-hi-in-swaraneural \
+  --set secretRef.enabled=true \
+  --set secretRef.name=bfl-speech-creds \
+  --set secretRef.billingKey=BILLING_URL \
+  --set secretRef.apiKeyKey=COG_KEY \
+  --set resources.requests.cpu=8 \
+  --set resources.requests.memory=12Gi \
+  --set resources.limits.cpu=8 \
+  --set resources.limits.memory=16Gi \
+  --set concurrency.numberOfConcurrentRequest=5 \
+  --set service.type=ClusterIP \
+  --set ingress.enabled=false
+```
+
+> **Other Hindi TTS voices on tag 4.7.0** (swap the suffix): `hi-in-madhurneural`, `hi-in-rehaanneural`, `hi-in-aaravneural`, `hi-in-ananyaneural`, `hi-in-kavyaneural`, `hi-in-kunalneural`, `hi-in-arjunneural`.
+
+**Verify both come up Running:**
+```bash
+kubectl get pods -n speech -l 'app.kubernetes.io/instance in (stt-hi,tts-hi)' -w
+```
+
+**Confirm Secret was wired in correctly (values are never exposed):**
+```bash
+kubectl describe pod -n speech -l app.kubernetes.io/instance=stt-hi | findstr -i "billing apikey"
+# Expect:
+#   Billing:  <set to the key 'BILLING_URL' in secret 'bfl-speech-creds'>  Optional: false
+#   ApiKey:   <set to the key 'COG_KEY'     in secret 'bfl-speech-creds'>  Optional: false
 ```
 
 ### Example 5 — Single shared pool (collapse split-pool)
