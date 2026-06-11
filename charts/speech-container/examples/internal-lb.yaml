@@ -1,0 +1,66 @@
+# =============================================================================
+#  internal-lb.yaml — expose a release as an internal Azure LoadBalancer
+# -----------------------------------------------------------------------------
+#  Use when you want the Speech container reachable from VMs in the SAME VNet
+#  as the AKS cluster (or peered VNets / on-prem via VPN/ExpressRoute) — but
+#  NOT from the public internet.
+#
+#  How it works:
+#    - service.type=LoadBalancer triggers AKS to create an Azure LB rule.
+#    - The azure-load-balancer-internal annotation tells AKS to use an
+#      INTERNAL Standard Load Balancer instead of a public one.
+#    - Azure allocates a private IP from the AKS node subnet (e.g. 10.224.0.45)
+#      and binds it to the LB frontend. That IP is routable everywhere VNet
+#      routing reaches.
+#    - ingress.enabled=false disables the chart's NGINX Ingress rule, since
+#      this layout exposes the container via LB directly.
+#
+#  Usage (layer on top of any language example):
+#    helm upgrade --install tts-hi speech-container/speech-container \
+#      -n speech --version 1.2.9 \
+#      -f speech-container/examples/tts-hi.yaml \
+#      -f speech-container/examples/internal-lb.yaml \
+#      --set secretRef.enabled=true \
+#      --set secretRef.name=speech-credentials
+#
+#  After install, capture the assigned private IP:
+#    kubectl get svc -n speech tts-hi-speech-container
+#    # NAME                      TYPE           EXTERNAL-IP    PORT(S)
+#    # tts-hi-speech-container   LoadBalancer   10.224.0.45    5000:31xxx/TCP
+#
+#  From a VM anywhere in the VNet / peered VNet:
+#    curl http://10.224.0.45:5000/ready
+#
+# =============================================================================
+
+service:
+  type: LoadBalancer
+  annotations:
+    # The annotation value MUST be the string "true" (quoted) — Kubernetes
+    # rejects boolean true here. The quotes preserve string semantics.
+    service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+
+    # OPTIONAL — pin the private IP. The IP must be:
+    #   * Inside the AKS node subnet's CIDR
+    #   * Not already in use
+    #   * Reserved if you want lifetime guarantees (Azure can re-allocate
+    #     unreserved IPs after Service deletion)
+    # service.beta.kubernetes.io/azure-load-balancer-ipv4: "10.224.0.45"
+
+    # OPTIONAL — choose a specific node subnet for the LB frontend when
+    # the AKS cluster spans multiple subnets. Defaults to the cluster's
+    # primary node subnet if unset.
+    # service.beta.kubernetes.io/azure-load-balancer-internal-subnet: "aks-internal-lb-subnet"
+
+  # OPTIONAL — restrict who can reach the LB IP at the LB level (in addition
+  # to NSG). CIDR list of allowed source ranges. Tighten this for least-privilege.
+  # loadBalancerSourceRanges:
+  #   - 10.224.0.0/16        # the AKS VNet
+  #   - 10.100.0.0/24        # a peered consumer subnet
+  #   - 192.168.1.0/24       # on-prem CIDR via VPN
+
+# Disable the chart's NGINX Ingress — this layout exposes the container via
+# the LB directly. Leaving both Ingress and LB enabled is wasteful (two
+# entrypoints) and the chart fails fast if both are set alongside Gateway API.
+ingress:
+  enabled: false

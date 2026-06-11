@@ -7,7 +7,7 @@ Replaces the abandoned `microsoft/cognitive-services-speech-onpremise` chart (v0
 - **Chart repo**: `https://osshaikh.github.io/speechcontainer/`
 - **Source**: `https://github.com/Osshaikh/speechcontainer`
 - **App version**: 5.3.0 (STT) / 4.7.0 (TTS — current line; some legacy en-US/hi-IN voices also published on 4.6.0). New locales (ta-IN, mr-IN, te-IN, bn-IN, gu-IN, kn-IN, ml-IN, pa-IN, ur-IN, …) **ship only on 4.7.0** — always prefer 4.7.0 unless you have a specific reason to pin an older voice. See [image references](#image--documentation-references) and the [tag lookup helper](#tag-lookup-helper-before-installing-a-new-locale).
-- **Chart version**: 1.2.8
+- **Chart version**: 1.2.9
 - **Helm**: 3.10+ (Helm 4.x also tested and supported)
 
 ---
@@ -439,7 +439,7 @@ helm install stt-en speech-container/speech-container \
 To grab the example value files without cloning the repo:
 ```bash
 helm pull speech-container/speech-container --untar
-ls speech-container/examples/   # stt-en.yaml, stt-hi.yaml, stt-ta.yaml, tts-en.yaml, tts-hi.yaml, tts-ta.yaml, prod-overrides.yaml, agc-overrides.yaml
+ls speech-container/examples/   # stt-en.yaml, stt-hi.yaml, stt-ta.yaml, tts-en.yaml, tts-hi.yaml, tts-ta.yaml, prod-overrides.yaml, agc-overrides.yaml, internal-lb.yaml
 ```
 
 ---
@@ -673,6 +673,34 @@ helm install stt-en speech-container/speech-container -n speech \
   --set service.type=LoadBalancer \
   --set ingress.enabled=false
 ```
+
+### Example 8a — Expose via INTERNAL LoadBalancer (private IP, VNet-routable only)
+
+Use when consumers live in the **same VNet** as the AKS cluster (or peered VNets / on-prem via VPN/ExpressRoute) but should NOT be reachable from the public internet. Layer the bundled `internal-lb.yaml` overlay on top of any language example:
+
+```bash
+# Hindi TTS reachable from any VM in the AKS VNet at a private IP
+helm install tts-hi speech-container/speech-container -n speech \
+  -f examples/tts-hi.yaml \
+  -f examples/internal-lb.yaml \
+  --set secretRef.enabled=true \
+  --set secretRef.name=speech-credentials
+```
+
+After install, capture the assigned private IP (from the AKS node subnet, e.g. `10.224.0.45`):
+
+```bash
+kubectl get svc -n speech tts-hi-speech-container
+# NAME                      TYPE           EXTERNAL-IP    PORT(S)
+# tts-hi-speech-container   LoadBalancer   10.224.0.45    5000:31xxx/TCP
+```
+
+From a VM anywhere in the VNet or peered VNet:
+```bash
+curl http://10.224.0.45:5000/ready
+```
+
+> **Why not just use `--set service.annotations.service\.beta\.kubernetes\.io/azure-load-balancer-internal=true`?** Because `--set` parses unquoted `true` as a boolean and Kubernetes annotations require strings, so you hit `cannot unmarshal bool into … type string`. The overlay file pins the value as the string `"true"` and is the simplest path. (If you must use a flag, switch to `--set-string`.)
 
 ### Example 9 — TLS-enabled ingress with cert-manager
 ```bash
