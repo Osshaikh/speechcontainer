@@ -1,7 +1,7 @@
 apiVersion: v2
 name: speech-container
 type: application
-version: 1.2.9
+version: 1.2.10
 appVersion: "5.3.0"
 description: |
   Helm chart for deploying Azure AI Speech disconnected containers (Speech-to-Text
@@ -33,4 +33,3 @@ annotations:
       url: https://github.com/Osshaikh/speechcontainer
     - name: Documentation
       url: https://github.com/Osshaikh/speechcontainer/blob/main/charts/speech-container/README.md
-

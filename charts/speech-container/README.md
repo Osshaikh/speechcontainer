@@ -7,7 +7,7 @@ Replaces the abandoned `microsoft/cognitive-services-speech-onpremise` chart (v0
 - **Chart repo**: `https://osshaikh.github.io/speechcontainer/`
 - **Source**: `https://github.com/Osshaikh/speechcontainer`
 - **App version**: 5.3.0 (STT) / 4.7.0 (TTS — current line; some legacy en-US/hi-IN voices also published on 4.6.0). New locales (ta-IN, mr-IN, te-IN, bn-IN, gu-IN, kn-IN, ml-IN, pa-IN, ur-IN, …) **ship only on 4.7.0** — always prefer 4.7.0 unless you have a specific reason to pin an older voice. See [image references](#image--documentation-references) and the [tag lookup helper](#tag-lookup-helper-before-installing-a-new-locale).
-- **Chart version**: 1.2.9
+- **Chart version**: 1.2.10
 - **Helm**: 3.10+ (Helm 4.x also tested and supported)
 
 ---
@@ -478,7 +478,7 @@ All values configurable via `--set`, `--set-json`, or `-f values.yaml`.
 Concurrency cap (passed as `DECODER_MAX_COUNT` env var):
 | Key | Chart default | STT example | TTS example |
 |---|---|---|---|
-| `concurrency.numberOfConcurrentRequest` | `5` | `4` | `6` |
+| `concurrency.numberOfConcurrentRequest` | `8` | `8` | `5` |
 
 ### Scheduling
 | Key | Default | Notes |
@@ -587,7 +587,7 @@ helm install stt-hi speech-container/speech-container -n speech \
   --set resources.requests.memory=8Gi \
   --set resources.limits.cpu=8 \
   --set resources.limits.memory=14Gi \
-  --set concurrency.numberOfConcurrentRequest=5 \
+  --set concurrency.numberOfConcurrentRequest=8 \
   --set service.type=ClusterIP \
   --set ingress.enabled=false
 ```

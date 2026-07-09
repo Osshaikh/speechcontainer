@@ -17,7 +17,7 @@
 #
 #  Usage (layer on top of any language example):
 #    helm upgrade --install tts-hi speech-container/speech-container \
-#      -n speech --version 1.2.9 \
+#      -n speech --version 1.2.10 \
 #      -f speech-container/examples/tts-hi.yaml \
 #      -f speech-container/examples/internal-lb.yaml \
 #      --set secretRef.enabled=true \

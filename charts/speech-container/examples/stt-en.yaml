@@ -11,7 +11,7 @@ resources:
     memory: "4Gi"
 
 concurrency:
-  numberOfConcurrentRequest: 4
+  numberOfConcurrentRequest: 8
 
 replicaCount: 1
 

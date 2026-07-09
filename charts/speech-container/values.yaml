@@ -42,7 +42,7 @@ secretRef:
 
 # ---- concurrency knob (informational; resources below are authoritative) -----
 concurrency:
-  numberOfConcurrentRequest: 5        # raise for higher load — must match your CPU sizing
+  numberOfConcurrentRequest: 8        # STT: 2 sessions/core × 4-core request = 8; tune per CPU sizing
 
 # ---- resources — MS Learn aligned defaults -----------------------------------
 # Reference: https://learn.microsoft.com/azure/ai-services/speech-service/speech-container-howto
