@@ -71,13 +71,13 @@ env:
   #     value: "http://+:5000"
 
 # ---- replicas / autoscaling --------------------------------------------------
-replicaCount: 1
+replicaCount: 2
 
 autoscaling:
   enabled: true                       # HPA on by default — scale on CPU pressure
-  minReplicas: 1
-  maxReplicas: 5
-  targetCPUUtilizationPercentage: 70
+  minReplicas: 2
+  maxReplicas: 80
+  targetCPUUtilizationPercentage: 60
   # Optional memory target — uncomment if you want to scale on memory too
   # targetMemoryUtilizationPercentage: 80
 
