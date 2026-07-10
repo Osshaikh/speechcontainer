@@ -77,7 +77,7 @@ autoscaling:
   enabled: true                       # HPA on by default — scale on CPU pressure
   minReplicas: 2
   maxReplicas: 80
-  targetCPUUtilizationPercentage: 60
+  targetCPUUtilizationPercentage: 75
   # Optional memory target — uncomment if you want to scale on memory too
   # targetMemoryUtilizationPercentage: 80
 

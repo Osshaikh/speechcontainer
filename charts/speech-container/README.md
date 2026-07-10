@@ -506,7 +506,7 @@ Concurrency cap (passed as `DECODER_MAX_COUNT` env var):
 | `autoscaling.enabled` | `true` | |
 | `autoscaling.minReplicas` | `1` | |
 | `autoscaling.maxReplicas` | `5` (chart) / `4` (examples) | |
-| `autoscaling.targetCPUUtilizationPercentage` | `70` | |
+| `autoscaling.targetCPUUtilizationPercentage` | `75` | |
 
 ### Misc
 | Key | Default | Notes |

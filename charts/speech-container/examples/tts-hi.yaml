@@ -20,7 +20,7 @@ autoscaling:
   enabled: true
   minReplicas: 2
   maxReplicas: 80
-  targetCPUUtilizationPercentage: 60
+  targetCPUUtilizationPercentage: 75
 
 service:
   type: ClusterIP
