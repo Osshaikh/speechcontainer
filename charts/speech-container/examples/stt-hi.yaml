@@ -10,8 +10,11 @@ resources:
     cpu: "4"
     memory: "4Gi"
 
+# Decoders = concurrent sessions per pod. Each decoder needs ~0.7-1.25 CPU.
+# For a 4-core request, 5 decoders keeps each decoder CPU-fed (low latency).
+# Raise to 8 only if you also raise resources.requests.cpu to 8.
 concurrency:
-  numberOfConcurrentRequest: 8
+  numberOfConcurrentRequest: 5
 
 replicaCount: 2
 
