@@ -79,7 +79,7 @@ Want a different locale (Telugu, Marathi, Bengali, etc.)? See the **"Adding addi
 ## Prerequisites at a glance
 
 1. **Azure AI Speech resource** with disconnected commitment tier (S0 SKU + Commitment Tiers blade)
-2. **Kubernetes cluster** ≥ 1.27 with two node pools (sized per the [Capacity planning](#capacity-planning) section below)
+2. **Kubernetes cluster** ≥ 1.27 with four node pools — Hindi STT, other-language STT, Hindi TTS, other-language TTS (sized per the [Capacity planning](#capacity-planning) section below; fewer pools are supported via the chart's `nodePool` value)
 3. **Network egress** to `mcr.microsoft.com` and `<your-resource>.cognitiveservices.azure.com`
 4. **Helm** ≥ 3.10 and **kubectl** matching your cluster version
 
@@ -107,8 +107,10 @@ The chart ships with **minimums** as the example request values; limits stay at 
 | Pool | Family | Sizing per node | Why | Density (chart-default requests) |
 |---|---|---|---|---|
 | **System** (`syspool`) | General purpose | 4 cores / 16 GB | Runs CoreDNS, ingress, addons | n/a |
-| **STT** (`sttpool`) | **Compute-optimized** | 16 cores / 32 GB | STT is CPU-bound | 2 pods/node safe (req 4c each) |
-| **TTS** (`ttspool`) | **Memory-optimized** | 16 cores / 128 GB | Neural voices need RAM | 2 pods/node safe (req 6c / 12Gi each) — **1 node per 2 language containers** |
+| **STT Hindi** (`workload=stt-hi`) / **STT other** (`workload=stt-other`) | **Compute-optimized** | 16 cores / 32 GB | STT is CPU-bound | 2 pods/node safe (req 4c each) |
+| **TTS Hindi** (`workload=tts-hi`) / **TTS other** (`workload=tts-other`) | **Memory-optimized** | 16 cores / 128 GB | Neural voices need RAM | 2 pods/node safe (req 6c / 12Gi each) — **1 node per 2 TTS pods** |
+
+Hindi gets dedicated STT and TTS pools; every other language shares the "other" pool of its workload type.
 
 ### Per-pod throughput
 
@@ -142,7 +144,7 @@ Recommended: 2 pods minimum  (HA + headroom)
 
 ### Reference sizing table
 
-| Monthly calls | Peak calls/hr (3×) | STT pods (req 4c/4Gi) | TTS pods (req 6c/12Gi) | Min sttpool nodes | Min ttspool nodes |
+| Monthly calls | Peak calls/hr (3×) | STT pods (req 4c/4Gi) | TTS pods (req 6c/12Gi) | Min STT nodes (total) | Min TTS nodes (total) |
 |---|---|---|---|---|---|
 | 10 k    | ~42   | 1 (+ 1 HA) | 1 (+ 1 HA) | 1 (compute-opt 16c)  | 1 (memory-opt 16c) |
 | 100 k   | ~420  | 2          | 2          | 2 (compute-opt 16c)  | 2 (memory-opt 16c) |
@@ -151,6 +153,7 @@ Recommended: 2 pods minimum  (HA + headroom)
 | 5 M     | ~21 k | 11         | 35         | 11 (compute-opt 16c) | 35 (memory-opt 16c) |
 
 > Node count = pod count when using chart minimum requests (1 pod/node fits on a 16-core node with our 4c-STT / 6c-TTS requests).
+> **Four-pool layout:** node totals are split between the Hindi and other-language pool of each workload type, according to your traffic mix. Each pool needs at least 1 node (2 for node-level HA), so the four-pool minimum is 2 STT + 2 TTS nodes even where the table shows 1.
 > Increase peak multiplier (× factor) if your traffic profile is spikier (e.g., 5× for retail flash events, 10× for emergency campaigns).
 
 ### Tunable assumptions in this model

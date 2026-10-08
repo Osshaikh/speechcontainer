@@ -6,6 +6,7 @@ CPU request/limit  : {{ .Values.resources.requests.cpu }} / {{ .Values.resources
 Memory request/lim : {{ .Values.resources.requests.memory }} / {{ .Values.resources.limits.memory }}
 Concurrency        : DECODER_MAX_COUNT={{ .Values.concurrency.numberOfConcurrentRequest }}
 Service type       : {{ .Values.service.type }} (port {{ .Values.service.port }})
+Node pool          : {{ if .Values.nodePool }}{{ .Values.nodePoolKey }}={{ .Values.nodePool }} (toleration + soft affinity){{ else }}not set (any node){{ end }}
 
 Watch rollout:
   kubectl rollout status deployment/{{ include "speech-container.fullname" . }} -n {{ .Release.Namespace }}

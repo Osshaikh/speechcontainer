@@ -47,6 +47,43 @@ azure-cognitive-services/speechservices/neural-text-to-speech
 {{ .Values.image.registry }}/{{ include "speech-container.image.repository" . }}:{{ .Values.image.tag }}
 {{- end -}}
 
+{{/*
+  Tolerations: user-supplied list plus, when nodePool is set, a toleration for
+  the <nodePoolKey>=<nodePool>:NoSchedule taint.
+*/}}
+{{- define "speech-container.tolerations" -}}
+{{- $tolerations := list -}}
+{{- with .Values.tolerations -}}
+{{- $tolerations = concat $tolerations . -}}
+{{- end -}}
+{{- with .Values.nodePool -}}
+{{- $tolerations = append $tolerations (dict "key" (required "nodePoolKey is required when nodePool is set" $.Values.nodePoolKey) "operator" "Equal" "value" . "effect" "NoSchedule") -}}
+{{- end -}}
+{{- with $tolerations -}}
+{{- toYaml . -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+  Affinity: an explicit .Values.affinity wins; otherwise nodePool produces a
+  soft (preferred) node affinity for nodes labelled <nodePoolKey>=<nodePool>.
+*/}}
+{{- define "speech-container.affinity" -}}
+{{- if .Values.affinity -}}
+{{- toYaml .Values.affinity -}}
+{{- else if .Values.nodePool -}}
+nodeAffinity:
+  preferredDuringSchedulingIgnoredDuringExecution:
+    - weight: 100
+      preference:
+        matchExpressions:
+          - key: {{ .Values.nodePoolKey | quote }}
+            operator: In
+            values:
+              - {{ .Values.nodePool | quote }}
+{{- end -}}
+{{- end -}}
+
 {{- define "speech-container.serviceAccountName" -}}
 {{- if .Values.serviceAccount.create -}}
 {{- default (include "speech-container.fullname" .) .Values.serviceAccount.name -}}

@@ -156,12 +156,23 @@ gatewayApi:
     # alb.networking.azure.io/access-log: enabled
 
 # ---- pod scheduling ----------------------------------------------------------
-# Defaults are intentionally empty — chart stays environment-neutral.
+# nodePool: the dedicated node pool this release runs on. When set, the chart
+# adds:
+#   - a toleration for the taint  <nodePoolKey>=<nodePool>:NoSchedule
+#   - a SOFT (preferred) node affinity for nodes labelled <nodePoolKey>=<nodePool>
+# Pods prefer their pool but can fall back to any untainted node if it is full
+# or down, avoiding "stuck Pending". Hard nodeSelector is not recommended.
 #
-# RECOMMENDED for production: use toleration + SOFT (preferred) nodeAffinity,
-# NOT hard nodeSelector. See examples/prod-overrides.yaml for the full pattern.
-# Soft affinity prefers your speech pool but lets pods fall back to any node
-# if the speech pool is unavailable, avoiding "stuck Pending" failure modes.
+# Recommended four-pool layout (the examples/*.yaml files already set these):
+#   stt-hi     Hindi STT                      tts-hi     Hindi TTS
+#   stt-other  every other STT language       tts-other  every other TTS voice
+# Two-pool layout: nodePool: stt / tts.  Single shared pool: nodePool: speech.
+# Leave empty (chart default) to schedule on any node.
+nodePool: ""
+nodePoolKey: workload
+
+# Advanced overrides. Entries in `tolerations` are added to the nodePool
+# toleration. A non-empty `affinity` REPLACES the generated nodePool affinity.
 nodeSelector: {}
 tolerations: []
 affinity: {}

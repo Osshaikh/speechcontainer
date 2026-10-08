@@ -34,22 +34,7 @@ ingress:
   host: speech.example.com
   path: /stt/hi-IN
 
-# ---- Pod scheduling: dedicated STT nodepool ---------------------------------
-# Expects nodes tainted workload=stt:NoSchedule and labeled workload=stt.
-# Soft affinity = prefers STT pool, falls back to any untainted node if STT
-# pool is unavailable. See stt-en.yaml for full rationale.
-tolerations:
-  - key: workload
-    operator: Equal
-    value: stt
-    effect: NoSchedule
-
-affinity:
-  nodeAffinity:
-    preferredDuringSchedulingIgnoredDuringExecution:
-      - weight: 100
-        preference:
-          matchExpressions:
-            - key: workload
-              operator: In
-              values: ["stt"]
+# ---- Pod scheduling: dedicated Hindi STT node pool --------------------------
+# Pool tainted workload=stt-hi:NoSchedule and labelled workload=stt-hi.
+# The chart adds the matching toleration + soft node affinity (see stt-en.yaml).
+nodePool: stt-hi

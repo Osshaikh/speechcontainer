@@ -31,28 +31,14 @@ ingress:
   host: speech.example.com
   path: /stt/en-US
 
-# ---- Pod scheduling: dedicated STT nodepool ---------------------------------
-# Expects a nodepool prepared as:
-#   az aks nodepool add ... --name sttpool \
-#     --node-taints workload=stt:NoSchedule \
-#     --labels workload=stt
-# Combination used:
-#   - toleration       -> lets this pod LAND on the STT-tainted nodes
-#   - soft nodeAffinity -> PREFERS STT nodes (weight 100), falls back to any
-#     untainted node if STT pool is unavailable (avoids stuck Pending)
-# Edit the value "stt" if your nodepool uses a different taint/label value.
-tolerations:
-  - key: workload
-    operator: Equal
-    value: stt
-    effect: NoSchedule
-
-affinity:
-  nodeAffinity:
-    preferredDuringSchedulingIgnoredDuringExecution:
-      - weight: 100
-        preference:
-          matchExpressions:
-            - key: workload
-              operator: In
-              values: ["stt"]
+# ---- Pod scheduling: shared non-Hindi STT node pool -------------------------
+# Every non-Hindi STT language (en-US, ta-IN, ...) shares one pool, prepared as:
+#   az aks nodepool add ... --name sttother \
+#     --node-taints workload=stt-other:NoSchedule \
+#     --labels workload=stt-other
+# The chart turns `nodePool` into:
+#   - a toleration       -> lets this pod LAND on the stt-other tainted nodes
+#   - soft nodeAffinity  -> PREFERS stt-other nodes (weight 100), falls back to
+#     any untainted node if the pool is unavailable (avoids stuck Pending)
+# Two-pool cluster (workload=stt)? Set nodePool: stt instead.
+nodePool: stt-other

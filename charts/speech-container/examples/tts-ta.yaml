@@ -33,19 +33,5 @@ ingress:
   host: speech.example.com
   path: /tts/ta-IN
 
-# Pod scheduling: dedicated TTS nodepool (workload=tts taint + label).
-tolerations:
-  - key: workload
-    operator: Equal
-    value: tts
-    effect: NoSchedule
-
-affinity:
-  nodeAffinity:
-    preferredDuringSchedulingIgnoredDuringExecution:
-      - weight: 100
-        preference:
-          matchExpressions:
-            - key: workload
-              operator: In
-              values: ["tts"]
+# Pod scheduling: shared non-Hindi TTS pool (workload=tts-other taint + label).
+nodePool: tts-other

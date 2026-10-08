@@ -7,7 +7,7 @@ Replaces the abandoned `microsoft/cognitive-services-speech-onpremise` chart (v0
 - **Chart repo**: `https://osshaikh.github.io/speechcontainer/`
 - **Source**: `https://github.com/Osshaikh/speechcontainer`
 - **App version**: 5.3.0 (STT) / 4.7.0 (TTS — current line; some legacy en-US/hi-IN voices also published on 4.6.0). New locales (ta-IN, mr-IN, te-IN, bn-IN, gu-IN, kn-IN, ml-IN, pa-IN, ur-IN, …) **ship only on 4.7.0** — always prefer 4.7.0 unless you have a specific reason to pin an older voice. See [image references](#image--documentation-references) and the [tag lookup helper](#tag-lookup-helper-before-installing-a-new-locale).
-- **Chart version**: 1.2.10
+- **Chart version**: 1.3.0
 - **Helm**: 3.10+ (Helm 4.x also tested and supported)
 
 ---
@@ -21,7 +21,7 @@ Replaces the abandoned `microsoft/cognitive-services-speech-onpremise` chart (v0
 5. [Prerequisites](#prerequisites)
    - [Azure AI Speech resource](#1-azure-ai-speech-resource-billing-endpoint--api-key)
    - [Network / firewall whitelisting](#2-network--firewall-whitelisting)
-   - [Node pools, taints & labels](#3-node-pools-taints--labels-split-pool-pattern)
+   - [Node pools, taints & labels](#3-node-pools-taints--labels-four-pool-pattern)
    - [Speech credentials secret](#4-speech-credentials-secret)
    - [Azure Key Vault integration (AKS)](#azure-key-vault-integration-aks)
    - [Ingress controller](#5-ingress-controller-or-gateway-api)
@@ -97,36 +97,38 @@ For taints, ingress, capacity planning, and language-specific containers, read t
 ## Architecture overview
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    Kubernetes Cluster                            │
-│                                                                  │
-│  ┌──────────────┐   ┌──────────────┐   ┌──────────────┐          │
-│  │ system pool  │   │   STT pool   │   │   TTS pool   │          │
-│  │              │   │ taint=stt    │   │ taint=tts    │          │
-│  │              │   │              │   │              │          │
-│  │  CoreDNS     │   │  STT pod(s)  │   │  TTS pod(s)  │          │
-│  │  Ingress     │   │  4c / 4Gi    │   │  6c / 12Gi   │          │
-│  │  addons      │   │              │   │              │          │
-│  └──────────────┘   └──────────────┘   └──────────────┘          │
-│         │                  │                   │                  │
-│         └──────────────────┴───────────────────┘                  │
-│                            │                                      │
-│                       Speech Secret                               │
-│              (billing URL + API key OR CSI-mounted                │
-│              from Azure Key Vault / AWS Secrets Manager /         │
-│              GCP Secret Manager / external secret operator)       │
-└────────────────────────────┼─────────────────────────────────────┘
-                             │ outbound HTTPS
-                             ▼
-                ┌────────────────────────────┐
-                │   Azure AI Speech endpoint │
-                │  (license / billing only)  │
-                └────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                              Kubernetes Cluster                              │
+│                                                                              │
+│  ┌────────────┐ ┌────────────┐ ┌────────────┐ ┌────────────┐ ┌────────────┐  │
+│  │system pool │ │STT Hindi   │ │STT other   │ │TTS Hindi   │ │TTS other   │  │
+│  │            │ │=stt-hi     │ │=stt-other  │ │=tts-hi     │ │=tts-other  │  │
+│  │CoreDNS     │ │            │ │en, ta, ... │ │            │ │en, ta, ... │  │
+│  │Ingress /   │ │STT pod(s)  │ │STT pod(s)  │ │TTS pod(s)  │ │TTS pod(s)  │  │
+│  │Gateway     │ │4c / 4Gi    │ │4c / 4Gi    │ │6c / 12Gi   │ │6c / 12Gi   │  │
+│  │addons      │ │            │ │            │ │            │ │            │  │
+│  └──────┬─────┘ └──────┬─────┘ └──────┬─────┘ └──────┬─────┘ └──────┬─────┘  │
+│         │              │              │              │              │        │
+│         └──────────────┴──────────────┼──────────────┴──────────────┘        │
+│                                       │                                      │
+│                                Speech Secret                                 │
+│                    (billing URL + API key OR CSI-mounted                     │
+│                 from Azure Key Vault / AWS Secrets Manager /                 │
+│                GCP Secret Manager / external secret operator)                │
+└───────────────────────────────────────┼──────────────────────────────────────┘
+                                        │ outbound HTTPS
+                                        ▼
+                         ┌────────────────────────────┐
+                         │  Azure AI Speech endpoint  │
+                         │  (license / billing only)  │
+                         └────────────────────────────┘
 ```
 
-**Why split pools?** STT is CPU-bound, TTS is memory-bound (neural voice models load ~10 GB). Putting each workload on its own node family avoids over-provisioning and improves bin-packing.
+Pool labels/taints are `workload=<value>`; each release selects its pool with one value, `nodePool`.
 
-> 💡 **AKS:** Pool names like `sttpool`/`ttspool` are conventions, not requirements — you can use any nodepool name. The chart's example values just need taints `workload=stt` / `workload=tts` to exist on those pools.
+**Why four pools?** STT is CPU-bound, TTS is memory-bound (neural voice models load ~10 GB), so each workload gets its own node family. Within each workload, Hindi gets a dedicated pool and every other language shares a second pool. A busy Hindi workload can't starve other languages of node capacity, and each pool scales and is costed independently.
+
+> 💡 **AKS:** Pool names like `stthi`/`sttother`/`ttshi`/`ttsother` are conventions, not requirements — you can use any nodepool name. The chart only needs each pool's taint and label (`workload=stt-hi`, `workload=stt-other`, `workload=tts-hi`, `workload=tts-other`) to match the release's `nodePool` value. Fewer pools are supported too — see [§3](#3-node-pools-taints--labels-four-pool-pattern).
 
 ---
 
@@ -202,20 +204,31 @@ Disconnected containers need network access only at specific moments. Whitelist 
 - `<region>.api.cognitive.microsoft.com:443` — outbound, always
 - (No MCR needed if you mirrored to ACR.)
 
-### 3. Node pools, taints & labels (split-pool pattern)
+### 3. Node pools, taints & labels (four-pool pattern)
 
-The chart's example values files (1.1.4+) expect two dedicated node pools — one for STT, one for TTS — each carrying a taint and matching label. Any nodepool name works; the values reference taints/labels, not pool names.
+The chart's example values files (1.3.0+) expect four dedicated node pools: Hindi STT, every other STT language, Hindi TTS, and every other TTS voice. Each pool carries a taint and a matching label. Any nodepool name works; the chart references taints/labels, not pool names.
 
-| Workload | Required taint | Required label |
-|---|---|---|
-| STT pods | `workload=stt:NoSchedule` | `workload=stt` |
-| TTS pods | `workload=tts:NoSchedule` | `workload=tts` |
+| Pool | Runs | Required taint | Required label | Example files |
+|---|---|---|---|---|
+| Hindi STT | `hi-IN` STT | `workload=stt-hi:NoSchedule` | `workload=stt-hi` | `stt-hi.yaml` |
+| Other STT | `en-US`, `ta-IN`, any other STT locale | `workload=stt-other:NoSchedule` | `workload=stt-other` | `stt-en.yaml`, `stt-ta.yaml` |
+| Hindi TTS | `hi-IN` neural voices | `workload=tts-hi:NoSchedule` | `workload=tts-hi` | `tts-hi.yaml` |
+| Other TTS | `en-US`, `ta-IN`, any other TTS voice | `workload=tts-other:NoSchedule` | `workload=tts-other` | `tts-en.yaml`, `tts-ta.yaml` |
 
-**How the chart uses them:**
-- **Toleration** on each pod allows it to *land* on the tainted node
-- **Soft node affinity** (`preferredDuringSchedulingIgnoredDuringExecution`, weight 100) makes the pod *prefer* the matching pool — but falls back to any untainted node if the preferred pool is down (avoids stuck `Pending`)
+**How the chart uses them:** each example sets a single value, `nodePool` (for example `nodePool: stt-hi`). The chart turns it into:
+- a **toleration** for `workload=<nodePool>:NoSchedule`, which allows the pod to *land* on the tainted pool
+- a **soft node affinity** (`preferredDuringSchedulingIgnoredDuringExecution`, weight 100), which makes the pod *prefer* that pool but fall back to any untainted node if the pool is down (avoids stuck `Pending`)
 
 The hard rejection comes from the **taint** (gate). The soft affinity is a hint (compass).
+
+**Fewer pools?** Set `nodePool` per release instead of relying on the examples' values:
+
+| Layout | `nodePool` for STT releases | `nodePool` for TTS releases |
+|---|---|---|
+| Four pools (examples' default) | `stt-hi` (Hindi) / `stt-other` | `tts-hi` (Hindi) / `tts-other` |
+| Two pools (chart 1.2.x layout) | `stt` | `tts` |
+| One shared pool | `speech` (or layer `examples/prod-overrides.yaml`) | `speech` |
+| No dedicated pools | `""` (schedule on any node) | `""` |
 
 #### Platform-specific commands
 
@@ -223,28 +236,45 @@ The hard rejection comes from the **taint** (gate). The soft affinity is a hint 
 > ```bash
 > az aks nodepool add \
 >   --cluster-name <aks-name> --resource-group <rg> \
->   --name sttpool \
+>   --name stthi \
 >   --node-vm-size <compute-optimized-16c> \
->   --node-count 2 \
->   --node-taints "workload=stt:NoSchedule" \
->   --labels "workload=stt" --mode User
+>   --node-count 1 \
+>   --node-taints "workload=stt-hi:NoSchedule" \
+>   --labels "workload=stt-hi" --mode User
 >
 > az aks nodepool add \
 >   --cluster-name <aks-name> --resource-group <rg> \
->   --name ttspool \
+>   --name sttother \
+>   --node-vm-size <compute-optimized-16c> \
+>   --node-count 1 \
+>   --node-taints "workload=stt-other:NoSchedule" \
+>   --labels "workload=stt-other" --mode User
+>
+> az aks nodepool add \
+>   --cluster-name <aks-name> --resource-group <rg> \
+>   --name ttshi \
 >   --node-vm-size <memory-optimized-16c> \
->   --node-count 2 \
->   --node-taints "workload=tts:NoSchedule" \
->   --labels "workload=tts" --mode User
+>   --node-count 1 \
+>   --node-taints "workload=tts-hi:NoSchedule" \
+>   --labels "workload=tts-hi" --mode User
+>
+> az aks nodepool add \
+>   --cluster-name <aks-name> --resource-group <rg> \
+>   --name ttsother \
+>   --node-vm-size <memory-optimized-16c> \
+>   --node-count 1 \
+>   --node-taints "workload=tts-other:NoSchedule" \
+>   --labels "workload=tts-other" --mode User
 > ```
+> Size each pool's node count for its own languages and traffic (see [Capacity planning](../../README.md#capacity-planning)). Already have pools with different labels? Change them in place, without recreating nodes: `az aks nodepool update ... --name <pool> --labels workload=stt-other --node-taints workload=stt-other:NoSchedule`.
 
-> 💡 **EKS:** Add taint+label via `eksctl create nodegroup --node-labels=workload=stt --node-taints=workload=stt:NoSchedule` or under `nodeGroups[].taints` in your eksctl YAML.
+> 💡 **EKS:** Add taint+label via `eksctl create nodegroup --node-labels=workload=stt-hi --node-taints=workload=stt-hi:NoSchedule` (repeat per pool) or under `nodeGroups[].taints` in your eksctl YAML.
 
-> 💡 **GKE:** `gcloud container node-pools create stt-pool --node-labels=workload=stt --node-taints=workload=stt:NoSchedule`.
+> 💡 **GKE:** `gcloud container node-pools create stt-hi-pool --node-labels=workload=stt-hi --node-taints=workload=stt-hi:NoSchedule` (repeat per pool).
 
-> 💡 **Vanilla / kubeadm / OpenShift:** Apply via `kubectl taint nodes <node> workload=stt:NoSchedule` and `kubectl label nodes <node> workload=stt` — or via your node configuration tooling.
+> 💡 **Vanilla / kubeadm / OpenShift:** Apply via `kubectl taint nodes <node> workload=stt-hi:NoSchedule` and `kubectl label nodes <node> workload=stt-hi` — or via your node configuration tooling.
 
-If your nodepools use different taint values, override on install (see [Example 6](#example-6--custom-toleration-value-keyvalue-form)).
+If your nodepools use a different taint key or value, override on install (see [Example 6](#example-6--custom-taint-key-or-value)).
 
 ### 4. Speech credentials secret
 
@@ -483,10 +513,11 @@ Concurrency cap (passed as `DECODER_MAX_COUNT` env var):
 ### Scheduling
 | Key | Default | Notes |
 |---|---|---|
+| `nodePool` | `""` | Target pool: adds toleration `<nodePoolKey>=<nodePool>:NoSchedule` + soft affinity for label `<nodePoolKey>=<nodePool>`. Examples set `stt-hi` / `stt-other` / `tts-hi` / `tts-other`. Empty = any node |
+| `nodePoolKey` | `workload` | Taint/label key used by `nodePool` |
+| `tolerations` | `[]` | Extra tolerations, **added** to the `nodePool` toleration |
+| `affinity` | `{}` | When non-empty, **replaces** the soft affinity generated from `nodePool` |
 | `nodeSelector` | `{}` | Hard pin to a node (avoid in prod) |
-| `tolerations` | `[]` | STT examples add `workload=stt:NoSchedule`; TTS adds `workload=tts:NoSchedule` |
-| `affinity` | `{}` | STT/TTS examples add soft node affinity preferring `workload=stt`/`workload=tts` |
-| ⚠️ **Gotcha** | | Arrays REPLACE — `--set tolerations=...` while also using `-f stt-en.yaml` wipes the example's tolerations. Specify the full list. |
 
 ### Service & Ingress
 | Key | Default | Notes |
@@ -527,7 +558,7 @@ helm install stt-en speech-container/speech-container \
   -f examples/stt-en.yaml \
   --set secretRef.enabled=true
 ```
-**Result**: 4c/4Gi STT pod on `sttpool`, ingress at `speech.example.com/stt/en-US`.
+**Result**: 4c/4Gi STT pod on the non-Hindi STT pool (`workload=stt-other`), ingress at `speech.example.com/stt/en-US`.
 
 ### Example 2 — Quickstart TTS (Hindi)
 ```bash
@@ -536,7 +567,7 @@ helm install tts-hi speech-container/speech-container \
   -f examples/tts-hi.yaml \
   --set secretRef.enabled=true
 ```
-**Result**: 6c/12Gi TTS pod on `ttspool`, ingress at `speech.example.com/tts/hi-IN`.
+**Result**: 6c/12Gi TTS pod on the Hindi TTS pool (`workload=tts-hi`), ingress at `speech.example.com/tts/hi-IN`.
 
 ### Example 3 — Override resources at install time
 ```bash
@@ -629,32 +660,35 @@ kubectl describe pod -n speech -l app.kubernetes.io/instance=stt-hi | findstr -i
 #   ApiKey:   <set to the key 'COG_KEY'     in secret 'bfl-speech-creds'>  Optional: false
 ```
 
-### Example 5 — Single shared pool (collapse split-pool)
-If you only have ONE speech nodepool labeled/tainted `workload=speech`:
+### Example 5 — Fewer pools (two pools, or one shared pool)
+Two pools labelled/tainted `workload=stt` and `workload=tts` (the chart 1.2.x layout):
+```bash
+helm install stt-hi speech-container/speech-container -n speech \
+  -f examples/stt-hi.yaml \
+  --set nodePool=stt \
+  --set secretRef.enabled=true
+```
+Use `--set nodePool=tts` for TTS releases.
+
+One speech pool labelled/tainted `workload=speech`:
 ```bash
 helm install stt-en speech-container/speech-container -n speech \
   -f examples/stt-en.yaml \
   -f examples/prod-overrides.yaml \
   --set secretRef.enabled=true
 ```
-`prod-overrides.yaml` replaces the STT-specific toleration with `workload=speech` so STT and TTS share one pool.
+`prod-overrides.yaml` sets `nodePool: speech`, so STT and TTS share one pool.
 
-### Example 6 — Custom toleration value (key=value form)
-If your nodepool taint is `dedicated=speech-prod:NoSchedule`:
+### Example 6 — Custom taint key or value
+If your nodepool taint and label are `dedicated=speech-prod`:
 ```bash
 helm install stt-en speech-container/speech-container -n speech \
   -f examples/stt-en.yaml \
   --set secretRef.enabled=true \
-  --set tolerations[0].key=dedicated \
-  --set tolerations[0].operator=Equal \
-  --set tolerations[0].value=speech-prod \
-  --set tolerations[0].effect=NoSchedule \
-  --set affinity.nodeAffinity.preferredDuringSchedulingIgnoredDuringExecution[0].weight=100 \
-  --set affinity.nodeAffinity.preferredDuringSchedulingIgnoredDuringExecution[0].preference.matchExpressions[0].key=dedicated \
-  --set affinity.nodeAffinity.preferredDuringSchedulingIgnoredDuringExecution[0].preference.matchExpressions[0].operator=In \
-  --set affinity.nodeAffinity.preferredDuringSchedulingIgnoredDuringExecution[0].preference.matchExpressions[0].values[0]=speech-prod
+  --set nodePoolKey=dedicated \
+  --set nodePool=speech-prod
 ```
-> Helm arrays REPLACE — when using `--set toleration[0]…` together with `-f stt-en.yaml`, your `--set` values fully replace the example's toleration list.
+The chart generates the matching toleration and soft affinity. Need different placement logic (for example a hard `requiredDuringScheduling…` rule)? Set `affinity` directly; a non-empty `affinity` replaces the generated one, while the `nodePool` toleration is kept.
 
 ### Example 7 — Disable HPA, fix replica count
 ```bash
@@ -792,7 +826,7 @@ helm install stt-ta speech-container/speech-container -n speech \
   -f examples/stt-ta.yaml \
   --set secretRef.enabled=true
 ```
-**Result**: Tamil STT pod on `sttpool`, ingress at `speech.example.com/stt/ta-IN`. Repository is auto-derived from `mode: stt` (no need to pass `image.repository`).
+**Result**: Tamil STT pod on the non-Hindi STT pool (`workload=stt-other`), ingress at `speech.example.com/stt/ta-IN`. Repository is auto-derived from `mode: stt` (no need to pass `image.repository`).
 
 Alternatively, override the tag on top of the English values:
 ```bash
@@ -810,7 +844,7 @@ helm install tts-ta speech-container/speech-container -n speech \
   -f examples/tts-ta.yaml \
   --set secretRef.enabled=true
 ```
-**Result**: Tamil TTS pod on `ttspool`, ingress at `speech.example.com/tts/ta-IN`. Repository auto-derived from `mode: tts`.
+**Result**: Tamil TTS pod on the non-Hindi TTS pool (`workload=tts-other`), ingress at `speech.example.com/tts/ta-IN`. Repository auto-derived from `mode: tts`.
 
 Alternatively, override the tag on top of the English values:
 ```bash
@@ -838,6 +872,7 @@ helm install <RELEASE> speech-container/speech-container -n speech \
   --set image.tag=<VERSION>-amd64-<LOCALE>-<VOICE>neural \
   --set ingress.path=/tts/<LOCALE>
 ```
+These reuse the English examples, so the pods land on the non-Hindi `stt-other` / `tts-other` pools. For Hindi, start from `stt-hi.yaml` / `tts-hi.yaml`, or add `--set nodePool=stt-hi` / `--set nodePool=tts-hi`.
 
 ### Example 14 — Bulk install many languages
 ```bash
@@ -853,10 +888,12 @@ declare -A STT_LANGS=(
 )
 
 for lang in "${!STT_LANGS[@]}"; do
+  pool=$([ "$lang" = hi ] && echo stt-hi || echo stt-other)
   helm install stt-$lang speech-container/speech-container -n speech \
     -f examples/stt-en.yaml \
     --set secretRef.enabled=true \
     --set image.tag=${STT_LANGS[$lang]} \
+    --set nodePool=$pool \
     --set ingress.path=/stt/$lang
 done
 
@@ -871,17 +908,19 @@ declare -A TTS_LANGS=(
 )
 
 for lang in "${!TTS_LANGS[@]}"; do
+  pool=$([ "$lang" = hi ] && echo tts-hi || echo tts-other)
   helm install tts-$lang speech-container/speech-container -n speech \
     -f examples/tts-en.yaml \
     --set secretRef.enabled=true \
     --set image.tag=${TTS_LANGS[$lang]} \
+    --set nodePool=$pool \
     --set ingress.path=/tts/$lang
 done
 ```
 
 > ⚠️ **Verify each tag exists on MCR before installing.** Use the [tag lookup helper](#tag-lookup-helper-before-installing-a-new-locale) snippet above — it's faster and more reliable than `docker pull`, and it catches typos before you hit `ImagePullBackOff`.
 
-> 📦 **Capacity reminder for multi-language deployments.** Each language = one extra pod on `ttspool` (or `sttpool`). With chart defaults (6 CPU / 12 GiB TTS request) and a 16-core memory-optimized node, **only 2 TTS pods fit per node**. Planning for 4 TTS languages? Provision **at least 2 nodes in `ttspool` before installing**, otherwise the 3rd/4th pod will sit in `Pending` with `FailedScheduling: Insufficient cpu` (the `workload=tts:NoSchedule` taint prevents fallback to other pools by design). Rule of thumb: **`ceil(num_TTS_languages / 2)` ttspool nodes**, same math for STT.
+> 📦 **Capacity reminder for multi-language deployments.** Each language = one extra pod on its pool. Every non-Hindi language shares the `stt-other` / `tts-other` pool, so that pool grows with the number of languages. With chart defaults (6 CPU / 12 GiB TTS request) and a 16-core memory-optimized node, **only 2 TTS pods fit per node**. Planning for 4 non-Hindi TTS languages? Provision **at least 2 nodes in the `tts-other` pool before installing**, otherwise the 3rd/4th pod will sit in `Pending` with `FailedScheduling: Insufficient cpu` (the `workload=tts-other:NoSchedule` taint keeps other pools' nodes for their own workloads). Rule of thumb: **`ceil(TTS pods on the pool / 2)` nodes per TTS pool**, same math for STT.
 
 ---
 
@@ -969,7 +1008,8 @@ kubectl delete namespace speech     # optional cleanup
 | `helm install` errors `args.billing is required` | Forgot `--set secretRef.enabled=true` AND no inline billing | Either enable secretRef or pass `--set args.billing=...` |
 | Pod runs but `/ready` returns 503 for ~60s | Speech model still loading from disk | Wait 60–90s; increase readiness probe `initialDelaySeconds` if needed |
 | HPA stays at 1 replica under load | Metrics-server missing / wrong target | `kubectl top pods -n speech`; verify metrics-server installed |
-| Multiple pods on same node despite split-pool | Soft affinity fell back because target pool full | Scale STT/TTS pool, or check for taint mismatch |
+| Multiple pods on same node despite split pools | Soft affinity fell back because target pool full | Scale that pool, or check the pool's taint/label matches the release's `nodePool` |
+| Pod lands on (or stays `Pending` off) the wrong pool after upgrading from chart 1.2.x | Examples now target `stt-hi`/`stt-other`/`tts-hi`/`tts-other`; pools still labelled `workload=stt`/`workload=tts` | Relabel/retaint the pools (see [§3](#3-node-pools-taints--labels-four-pool-pattern)), or set `nodePool=stt` / `nodePool=tts` |
 
 ---
 

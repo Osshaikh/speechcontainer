@@ -5,6 +5,23 @@ All notable changes to the `speech-container` Helm chart are documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-10-08
+
+### Added
+- **`nodePool` value** (plus `nodePoolKey`, default `workload`). Setting one value, e.g. `nodePool: stt-hi`, makes the chart generate a toleration for `workload=stt-hi:NoSchedule` and a soft (preferred) node affinity for nodes labelled `workload=stt-hi`. Replaces the repeated toleration/affinity blocks previously copied into every example.
+- `NOTES.txt` now prints the target node pool.
+
+### Changed — examples now target a four-pool layout
+- `stt-hi.yaml` → `nodePool: stt-hi`; `stt-en.yaml`, `stt-ta.yaml` → `nodePool: stt-other`.
+- `tts-hi.yaml` → `nodePool: tts-hi`; `tts-en.yaml`, `tts-ta.yaml` → `nodePool: tts-other`.
+- `prod-overrides.yaml` → `nodePool: speech` (single shared pool).
+- Hindi gets dedicated STT and TTS pools; every other language shares one STT and one TTS pool. Placement stays soft, as before.
+- Chart README §3, architecture diagram, values reference, Examples 5/6/13/14 and troubleshooting, plus root README capacity tables, updated for the four-pool layout.
+
+### Upgrade notes
+- Clusters still using the two-pool layout (`workload=stt` / `workload=tts`) must either relabel/retaint their pools to the four new values, or set `nodePool=stt` / `nodePool=tts` per release. Otherwise pods using the examples won't tolerate the existing pool taints and stay `Pending` (or fall back to other untainted nodes).
+- Setting `affinity` explicitly still works and replaces the generated affinity. Entries in `tolerations` are now added to the `nodePool` toleration instead of being the only tolerations.
+
 ## [1.2.6] - 2026
 
 ### Removed — Trim README callouts per user request

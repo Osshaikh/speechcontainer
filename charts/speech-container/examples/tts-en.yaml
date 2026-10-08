@@ -33,28 +33,14 @@ ingress:
   host: speech.example.com
   path: /tts/en-US
 
-# ---- Pod scheduling: dedicated TTS nodepool ---------------------------------
-# Expects a nodepool prepared as:
-#   az aks nodepool add ... --name ttspool \
-#     --node-taints workload=tts:NoSchedule \
-#     --labels workload=tts
-# Combination used:
-#   - toleration       -> lets this pod LAND on the TTS-tainted nodes
-#   - soft nodeAffinity -> PREFERS TTS nodes (weight 100), falls back to any
-#     untainted node if TTS pool is unavailable (avoids stuck Pending)
-# Edit the value "tts" if your nodepool uses a different taint/label value.
-tolerations:
-  - key: workload
-    operator: Equal
-    value: tts
-    effect: NoSchedule
-
-affinity:
-  nodeAffinity:
-    preferredDuringSchedulingIgnoredDuringExecution:
-      - weight: 100
-        preference:
-          matchExpressions:
-            - key: workload
-              operator: In
-              values: ["tts"]
+# ---- Pod scheduling: shared non-Hindi TTS node pool -------------------------
+# Every non-Hindi TTS voice (en-US, ta-IN, ...) shares one pool, prepared as:
+#   az aks nodepool add ... --name ttsother \
+#     --node-taints workload=tts-other:NoSchedule \
+#     --labels workload=tts-other
+# The chart turns `nodePool` into:
+#   - a toleration       -> lets this pod LAND on the tts-other tainted nodes
+#   - soft nodeAffinity  -> PREFERS tts-other nodes (weight 100), falls back to
+#     any untainted node if the pool is unavailable (avoids stuck Pending)
+# Two-pool cluster (workload=tts)? Set nodePool: tts instead.
+nodePool: tts-other
