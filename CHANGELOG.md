@@ -5,6 +5,29 @@ All notable changes to the `speech-container` Helm chart are documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.2] - 2026-10-15
+
+Fixes from a second review of the README deploy path (AKS ready, four containers behind Gateway API).
+
+### Changed
+- **Example files renamed** so the Helm values file and the Kubernetes manifest can't be confused: `examples/approuting-gateway.yaml` → `examples/values-gateway-route.yaml` (Helm `-f`), `examples/gateway-approuting.yaml` → `examples/gateway.yaml` (`kubectl apply`).
+- **Namespace follows `$NS`**: `gateway.yaml` no longer hard-codes `namespace: speech` (apply it with `kubectl apply -n $NS`), and `values-gateway-route.yaml` leaves `gatewayApi.parentRef.namespace` empty, which means the release namespace. A namespace other than `speech` now works without editing either file.
+- **Examples set `nodePoolAffinity: required`**: speech pods never fall back to the system pool or another pool; when a pool is full they wait as `Pending`. Enable the cluster autoscaler on the speech pools. `--set nodePoolAffinity=preferred` restores the fallback.
+- CI checks the Gateway manifest has no namespace and the route overlay's parentRef namespace is empty.
+
+### Fixed (README)
+- Step 2 split into **2a namespace (always)** and **2b credentials Secret (skipped with Key Vault)**; the Key Vault blocks no longer create the namespace. Key Vault users previously skipped the namespace and Step 3 failed with `namespaces "speech" not found`.
+- The "set these once" block now derives `ENDPOINT` and `KEY` from the Speech resource and stops if either is empty, instead of creating a Secret with empty values that only fails later as `Api Key is invalid`.
+- Step 7 warm-up waits for each port-forward to exit before reusing local port 15000.
+- Tag lookup helper: the bash and PowerShell snippets both query STT with the same pattern (`-mr-in`), and say how to switch to TTS.
+- Capacity: chart and root README both plan 2 pods per 16-core node (STT pods can burst to 8 cores); root README note on node counts clarified.
+- Duplicate horizontal rule before "Production operations" removed.
+
+### Upgrade notes
+- Scripts using the old example file names must switch to `values-gateway-route.yaml` and `gateway.yaml`.
+- A Gateway created from the old manifest lives in `speech`; keep installing the releases in `speech`, or re-create the Gateway in your release namespace.
+- With `nodePoolAffinity: required`, pods that used to spill onto other nodes when their pool was full now stay `Pending`. Scale the pool or enable the cluster autoscaler before upgrading.
+
 ## [1.4.1] - 2026-10-15
 
 Documentation and example fixes from a review of the 1.4.0 README for a four-language deployment (STT and TTS, Hindi and non-Hindi) behind Gateway API on AKS.

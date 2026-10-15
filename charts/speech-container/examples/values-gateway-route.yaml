@@ -1,5 +1,5 @@
 # =============================================================================
-#  approuting-gateway.yaml: expose a release through AKS app routing
+#  values-gateway-route.yaml: expose a release through AKS app routing
 #  (Gateway API, gatewayClassName approuting-istio)
 # -----------------------------------------------------------------------------
 #  Recommended route on AKS. Layer it on top of any stt-*.yaml / tts-*.yaml
@@ -7,16 +7,16 @@
 #  /tts/<locale>), so each release gets its own path on the shared hostname.
 #
 #    helm upgrade --install stt-en speech-container/speech-container -n speech \
-#      --version 1.4.1 \
+#      --version 1.4.2 \
 #      -f examples/stt-en.yaml \
-#      -f examples/approuting-gateway.yaml \
+#      -f examples/values-gateway-route.yaml \
 #      --set secretRef.enabled=true \
 #      --set gatewayApi.hostname=speech.contoso.com     # REQUIRED
 #
 #  This is a Helm values file, not a Kubernetes manifest: pass it to helm with
 #  -f, don't kubectl apply it. The Gateway it attaches to is a separate manifest,
-#  examples/gateway-approuting.yaml, applied once per cluster (chart README,
-#  "Deploy" step 3). gatewayApi.parentRef below must match that Gateway.
+#  examples/gateway.yaml, applied once into the releases' namespace (chart
+#  README, Deploy step 3). gatewayApi.parentRef below must match that Gateway.
 #
 #  Clients call the path-routed URL with the Speech SDK `endpoint` parameter
 #  (the SDK `host` parameter does not accept a path):
@@ -31,7 +31,7 @@ gatewayApi:
   enabled: true
   parentRef:
     name: speech-gateway            # your shared Gateway
-    namespace: speech               # namespace of the Gateway
+    namespace: ""                   # empty = the release namespace, where gateway.yaml is applied
     sectionName: https              # listener name on the Gateway
   # REQUIRED: set with --set gatewayApi.hostname=<your hostname>. It must match
   # the Gateway listener hostname; requests with any other Host header get 404.

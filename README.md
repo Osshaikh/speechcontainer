@@ -17,7 +17,7 @@ The containers run in **connected mode**: audio and text are processed inside yo
 HOST=speech.contoso.com
 helm repo add speech-container https://osshaikh.github.io/speechcontainer/
 helm repo update
-helm pull speech-container/speech-container --version 1.4.1 --untar && cd speech-container
+helm pull speech-container/speech-container --version 1.4.2 --untar && cd speech-container
 
 kubectl create namespace speech
 kubectl create secret generic speech-credentials -n speech \
@@ -25,11 +25,11 @@ kubectl create secret generic speech-credentials -n speech \
   --from-literal=apikey="<your key>"
 
 # Shared Gateway (needs the TLS Secret speech-tls in the namespace)
-sed "s/speech.contoso.com/$HOST/" examples/gateway-approuting.yaml | kubectl apply -f -
+sed "s/speech.contoso.com/$HOST/" examples/gateway.yaml | kubectl apply -n speech -f -
 
 for rel in stt-hi stt-en tts-hi tts-en; do
-  helm upgrade --install $rel speech-container/speech-container -n speech --version 1.4.1 \
-    -f examples/$rel.yaml -f examples/approuting-gateway.yaml \
+  helm upgrade --install $rel speech-container/speech-container -n speech --version 1.4.2 \
+    -f examples/$rel.yaml -f examples/values-gateway-route.yaml \
     --set secretRef.enabled=true --set gatewayApi.hostname=$HOST \
     --wait --timeout 20m
 done
@@ -114,7 +114,7 @@ The chart ships with **minimums** as the example request values; limits stay at 
 | Pool | Family | Sizing per node | Why | Density (chart-default requests) |
 |---|---|---|---|---|
 | **System** (`syspool`) | General purpose | 4 cores / 16 GB | Runs CoreDNS, ingress, addons | n/a |
-| **STT Hindi** (`workload=stt-hi`) / **STT other** (`workload=stt-other`) | **Compute-optimized** | 16 cores / 32 GB | STT is CPU-bound | 2 pods/node safe (req 4c each) |
+| **STT Hindi** (`workload=stt-hi`) / **STT other** (`workload=stt-other`) | **Compute-optimized** | 16 cores / 32 GB | STT is CPU-bound | 2 pods/node (req 4c, limit 8c each; 3 fit by request but can't all burst) |
 | **TTS Hindi** (`workload=tts-hi`) / **TTS other** (`workload=tts-other`) | **Memory-optimized** | 16 cores / 128 GB | Neural voices need RAM | 2 pods/node safe (req 6c / 12Gi each) — **1 node per 2 TTS pods** |
 
 Hindi gets dedicated STT and TTS pools; every other language shares the "other" pool of its workload type.
@@ -159,7 +159,7 @@ Recommended: 2 pods minimum  (HA + headroom)
 | 1 M     | ~4,200| 3          | 7          | 3 (compute-opt 16c)  | 7 (memory-opt 16c) |
 | 5 M     | ~21 k | 11         | 35         | 11 (compute-opt 16c) | 35 (memory-opt 16c) |
 
-> Node count = pod count when using chart minimum requests (1 pod/node fits on a 16-core node with our 4c-STT / 6c-TTS requests).
+> Node counts here are conservative: one pod per 16-core node. At the planning density above (2 pods per node), the same pods need about half as many nodes, but keep at least 2 nodes per pool.
 > **Four-pool layout:** node totals are split between the Hindi and other-language pool of each workload type, according to your traffic mix. Each pool needs at least 1 node (2 for node-level HA), so the four-pool minimum is 2 STT + 2 TTS nodes even where the table shows 1. The chart spreads each release's replicas across nodes, but with one node per pool both replicas still share it, so plan 2 nodes per pool for production.
 > Increase peak multiplier (× factor) if your traffic profile is spikier (e.g., 5× for retail flash events, 10× for emergency campaigns).
 

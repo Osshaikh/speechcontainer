@@ -16,11 +16,9 @@
 
 nodePool: speech
 
-# ---- Hard placement (optional) ----------------------------------------------
-# Never schedule speech pods outside the shared pool (no fallback to other
-# nodes). Pods stay Pending if the pool is full, so pair it with the cluster
-# autoscaler on the pool.
-# nodePoolAffinity: required
+# The stt-*/tts-* examples set nodePoolAffinity: required, so pods never leave
+# the shared pool. To allow fallback to other untainted nodes instead:
+# nodePoolAffinity: preferred
 
 # ---- Optional: tighten or loosen unified resource defaults ------------------
 # resources:

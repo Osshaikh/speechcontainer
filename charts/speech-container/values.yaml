@@ -206,7 +206,7 @@ ingress:
 
 # ---- Gateway API (alternative to ingress) ------------------------------------
 # Use this for the AKS application routing add-on (GatewayClass approuting-istio,
-# see examples/approuting-gateway.yaml), Application Gateway for Containers, or
+# see examples/values-gateway-route.yaml), Application Gateway for Containers, or
 # any other Gateway API implementation (Envoy Gateway, Cilium, Contour, ...).
 # Mutually exclusive with `ingress.enabled`. Renders an HTTPRoute that attaches
 # to a pre-existing Gateway resource you (or the platform) manage. TLS is
