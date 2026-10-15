@@ -1,0 +1,39 @@
+# =============================================================================
+#  gateway-approuting.yaml: the shared Gateway for every speech release
+# -----------------------------------------------------------------------------
+#  A Kubernetes manifest (kubectl apply), not a Helm values file. Apply it once
+#  per cluster, after creating the TLS Secret `speech-tls` in the same
+#  namespace. Replace speech.contoso.com with your hostname, for example:
+#
+#    sed "s/speech.contoso.com/$HOST/" examples/gateway-approuting.yaml | kubectl apply -f -
+#
+#  Requires AKS app routing with Gateway API:
+#    az aks update -g <rg> -n <aks> --enable-gateway-api --enable-app-routing-istio
+#
+#  The speech releases attach to it through examples/approuting-gateway.yaml
+#  (parentRef name speech-gateway, namespace speech, sectionName https).
+# =============================================================================
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: speech-gateway
+  namespace: speech
+spec:
+  gatewayClassName: approuting-istio
+  # Private IP (internal Azure load balancer) instead of a public one:
+  # infrastructure:
+  #   annotations:
+  #     service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+  listeners:
+    - name: https
+      hostname: speech.contoso.com
+      port: 443
+      protocol: HTTPS
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: speech-tls
+      allowedRoutes:
+        namespaces:
+          from: Same

@@ -7,42 +7,16 @@
 #  /tts/<locale>), so each release gets its own path on the shared hostname.
 #
 #    helm upgrade --install stt-en speech-container/speech-container -n speech \
-#      --version 1.4.0 \
+#      --version 1.4.1 \
 #      -f examples/stt-en.yaml \
 #      -f examples/approuting-gateway.yaml \
 #      --set secretRef.enabled=true \
-#      --set gatewayApi.hostname=speech.contoso.com
+#      --set gatewayApi.hostname=speech.contoso.com     # REQUIRED
 #
-#  One-time cluster setup (not created by this chart). See chart README
-#  "Routing with AKS app routing (Gateway API)":
-#    1. Enable app routing with Gateway API (Istio-based) on the cluster.
-#    2. Create a TLS Secret for the hostname in the Gateway namespace.
-#    3. Create ONE shared Gateway, for example:
-#
-#       apiVersion: gateway.networking.k8s.io/v1
-#       kind: Gateway
-#       metadata:
-#         name: speech-gateway
-#         namespace: speech
-#       spec:
-#         gatewayClassName: approuting-istio
-#         # Internal (private) load balancer instead of a public IP:
-#         # infrastructure:
-#         #   annotations:
-#         #     service.beta.kubernetes.io/azure-load-balancer-internal: "true"
-#         listeners:
-#           - name: https
-#             hostname: speech.contoso.com
-#             port: 443
-#             protocol: HTTPS
-#             tls:
-#               mode: Terminate
-#               certificateRefs:
-#                 - kind: Secret
-#                   name: speech-tls
-#             allowedRoutes:
-#               namespaces:
-#                 from: Same
+#  This is a Helm values file, not a Kubernetes manifest: pass it to helm with
+#  -f, don't kubectl apply it. The Gateway it attaches to is a separate manifest,
+#  examples/gateway-approuting.yaml, applied once per cluster (chart README,
+#  "Deploy" step 3). gatewayApi.parentRef below must match that Gateway.
 #
 #  Clients call the path-routed URL with the Speech SDK `endpoint` parameter
 #  (the SDK `host` parameter does not accept a path):
@@ -59,10 +33,11 @@ gatewayApi:
     name: speech-gateway            # your shared Gateway
     namespace: speech               # namespace of the Gateway
     sectionName: https              # listener name on the Gateway
-  # Must match the Gateway listener hostname. Add more names (for example a
-  # private DNS name) under `hostnames`; every name must be accepted by the
-  # listener, and requests with any other Host header get 404.
-  hostname: speech.example.com
+  # REQUIRED: set with --set gatewayApi.hostname=<your hostname>. It must match
+  # the Gateway listener hostname; requests with any other Host header get 404.
+  # Left empty on purpose, so a forgotten hostname fails the install instead of
+  # creating a route nobody can reach. Extra names go under `hostnames`.
+  hostname: ""
   hostnames: []
   # Long-lived STT WebSocket sessions: 1 hour per request.
   timeouts:

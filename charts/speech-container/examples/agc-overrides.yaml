@@ -6,10 +6,11 @@
 #  any stt-*.yaml / tts-*.yaml example (the example sets gatewayApi.path):
 #
 #    helm upgrade --install stt-en speech-container/speech-container -n speech \
-#      --version 1.4.0 \
+#      --version 1.4.1 \
 #      -f examples/stt-en.yaml \
 #      -f examples/agc-overrides.yaml \
-#      --set secretRef.enabled=true
+#      --set secretRef.enabled=true \
+#      --set gatewayApi.hostname=speech.contoso.com
 #
 #  For most AKS clusters, prefer approuting-gateway.yaml (AKS app routing,
 #  Gateway API). The HTTPRoute is the same; only the parent Gateway differs.
@@ -33,7 +34,7 @@ gatewayApi:
     name: speech-gateway              # rename to match your Gateway resource
     namespace: speech                 # namespace where the Gateway lives
     # sectionName: https              # optional: pin to a specific Gateway listener
-  hostname: speech.example.com        # must match a hostname allowed by the Gateway listener
+  hostname: ""                       # REQUIRED: --set gatewayApi.hostname=<host accepted by the Gateway listener>
   # path comes from the stt-*/tts-* example (/stt/<locale> or /tts/<locale>)
   timeouts:
     request: "3600s"                  # AGC supports per-route timeouts (Gateway API v1.1+)

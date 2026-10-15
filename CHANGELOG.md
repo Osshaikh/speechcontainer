@@ -5,6 +5,37 @@ All notable changes to the `speech-container` Helm chart are documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] - 2026-10-15
+
+Documentation and example fixes from a review of the 1.4.0 README for a four-language deployment (STT and TTS, Hindi and non-Hindi) behind Gateway API on AKS.
+
+### Changed
+- **Chart README restructured** around one path: prerequisites (cluster check, Speech resource, egress, hostname/TLS/DNS) → deploy in 7 steps (pull chart, namespace and Secret, Gateway, install, check, test through the Gateway, warm up TTS). Steps now run in order: the chart and example files are pulled before they're used, and every command pins `--version`.
+- **Connected mode is the main text.** The containers report usage to the Speech resource every 10–15 minutes and need that egress permanently. Disconnected mode moved to Appendix A, which states that this chart doesn't support it (no license download, license or output volumes).
+- **Alternatives moved to appendices**: Application Gateway for Containers, NGINX Ingress, LoadBalancer per release (B); fewer pools, custom taint key, fixed replicas (C); bulk language install (D); EKS, GKE, OpenShift, vanilla (E).
+- **`gatewayApi.hostname` has no default** (was `speech.example.com`) in the chart and in `approuting-gateway.yaml` / `agc-overrides.yaml`. A forgotten hostname now fails the install (`gatewayApi.hostname or gatewayApi.hostnames is required`) instead of creating a route that answers 404. Likewise `ingress.host` has no default (was `speech.bfl.internal`) and is required when `ingress.enabled=true`.
+- **Examples no longer carry a disabled `ingress:` block**; each sets only `gatewayApi.path`.
+- `NOTES.txt` prints the route URL when Gateway API or Ingress is enabled.
+- Chart description no longer says "disconnected".
+
+### Added
+- **`examples/gateway-approuting.yaml`**: the shared `approuting-istio` Gateway as a Kubernetes manifest (HTTPS listener `https`, TLS Secret `speech-tls`, internal load balancer option). CI checks that its name, namespace and listener match the route overlay.
+- README: Speech resource creation with `--custom-domain` and a `disableLocalAuth` check; egress table limited to the billing URL host, MCR/ACR and AKS required endpoints; TLS certificate source and DNS step; tests through the Gateway (`/ready` for every language, TTS POST, STT round trip with the Speech SDK `endpoint`, 16 kHz WAV); TTS per-pod warm-up command; `--wait --timeout 20m` (30m for upgrades); Key Vault install commands combined with the Gateway overlay; uninstall removes the Gateway.
+- Troubleshooting: real key-validation errors (STT `Subscription validation failed with status 'Invalid'. Api Key is invalid`; TTS `CloudKeyAccessor` / `RSACryptoServiceProvider.Decrypt` then `Aborted (core dumped)`), key authentication disabled by policy, billing endpoint unreachable, Gateway not programmed, route not accepted, 404 and certificate trust.
+- CI checks every full image tag written in the chart README exists on MCR, and that installs fail without a hostname.
+
+### Removed
+- README Examples 3 and 4a/4b (4a/4b rendered without a node-pool toleration, with the surge rollout and without drain settings). A custom Secret name and keys is now one line in Step 2.
+- The tag lookup helper's token request (MCR lists tags anonymously; the token endpoint returns HTML). Added a PowerShell variant.
+
+### Fixed
+- Bulk-language example works in bash 3 and zsh (no `declare -A`), uses `helm upgrade --install` with the Gateway overlay, and pins te-IN / bn-IN TTS to 4.9.0.
+- The separate Quickstart (whose `kubectl port-forward` blocked the following `curl`) is replaced by the deploy steps.
+
+### Upgrade notes
+- If you relied on the old default hostnames (`speech.example.com` for Gateway API, `speech.bfl.internal` for Ingress), pass them explicitly: `--set gatewayApi.hostname=...` or `--set ingress.host=...`.
+- If you enabled Ingress on top of the examples, also pass `--set ingress.path=/<stt|tts>/<locale>`: the examples no longer set `ingress.path`.
+
 ## [1.4.0] - 2026-10-15
 
 Fixes from a deployment review of chart 1.3.0 on AKS. Review item IDs (A = incorrect, B = missing, C = docs) are in brackets. Includes the unreleased 1.3.1 STT memory change.

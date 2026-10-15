@@ -38,7 +38,8 @@ jobs:
               [ -n "$ov" ] && args+=(-f "$CHART/examples/$ov.yaml")
               echo "::group::$ex ${ov:-(no overlay)}"
               helm template test "$CHART" "${args[@]}" \
-                --set secretRef.enabled=true --set secretRef.name=test > /dev/null
+                --set secretRef.enabled=true --set secretRef.name=test \
+                --set gatewayApi.hostname=speech.contoso.com > /dev/null
               echo "::endgroup::"
             done
           done
@@ -88,7 +89,19 @@ jobs:
           expect_fail --set preStopSleepSeconds=60 --set terminationGracePeriodSeconds=30
           expect_fail --set secretProviderClass.enabled=true  # missing Key Vault name / tenant / client ID
           expect_fail --set gatewayApi.enabled=true --set gatewayApi.parentRef.name=gw \
-            --set gatewayApi.path=/stt/en-US --set gatewayApi.hostname=""
+            --set gatewayApi.path=/stt/en-US                   # no hostname
+          expect_fail -f "$CHART/examples/stt-en.yaml" -f "$CHART/examples/approuting-gateway.yaml"
+          expect_fail --set ingress.enabled=true --set ingress.path=/stt/en-US   # no ingress.host
+
+      - name: Gateway manifest matches the route overlay
+        run: |
+          set -euo pipefail
+          gw="$CHART/examples/gateway-approuting.yaml"
+          ov="$CHART/examples/approuting-gateway.yaml"
+          test "$(yq '.kind' "$gw")" = Gateway
+          test "$(yq '.metadata.name' "$gw")" = "$(yq '.gatewayApi.parentRef.name' "$ov")"
+          test "$(yq '.metadata.namespace' "$gw")" = "$(yq '.gatewayApi.parentRef.namespace' "$ov")"
+          test "$(yq '.spec.listeners[0].name' "$gw")" = "$(yq '.gatewayApi.parentRef.sectionName' "$ov")"
 
       - name: Image tags exist on MCR
         run: |
@@ -109,3 +122,8 @@ jobs:
           check "$stt" "$(yq '.image.tag' "$CHART/values.yaml")"
           for f in "$CHART"/examples/stt-*.yaml; do check "$stt" "$(yq '.image.tag' "$f")"; done
           for f in "$CHART"/examples/tts-*.yaml; do check "$tts" "$(yq '.image.tag' "$f")"; done
+          # Every full image tag written in the chart README must exist too.
+          mapfile -t tags < <(grep -oE '[0-9]+\.[0-9]+\.[0-9]+-amd64-[a-z]{2}-[a-z]{2}(-[a-z]+neural)?' "$CHART/README.md" | sort -u)
+          for t in "${tags[@]}"; do
+            case "$t" in *neural) check "$tts" "$t" ;; *) check "$stt" "$t" ;; esac
+          done

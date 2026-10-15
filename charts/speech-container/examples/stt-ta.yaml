@@ -54,17 +54,10 @@ service:
   type: ClusterIP
   port: 5000
 
-# ---- Exposure ---------------------------------------------------------------
-# Both routes are OFF here; turn one on with an overlay:
-#   -f examples/approuting-gateway.yaml   (recommended: AKS app routing, Gateway API)
-#   -f examples/agc-overrides.yaml        (Application Gateway for Containers)
-#   --set ingress.enabled=true            (an existing NGINX ingress controller)
-ingress:
-  enabled: false
-  className: nginx
-  host: speech.example.com
-  path: /stt/ta-IN
-
+# ---- Route -----------------------------------------------------------------
+# Path of this language on the shared Gateway hostname. Publish it with:
+#   -f examples/approuting-gateway.yaml --set gatewayApi.hostname=<your hostname>
+# Clients then call https://<your hostname>/stt/ta-IN/...
 gatewayApi:
   path: /stt/ta-IN
 

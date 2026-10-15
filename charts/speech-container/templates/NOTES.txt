@@ -10,6 +10,11 @@ Concurrency        : DECODER_MAX_COUNT={{ .Values.concurrency.numberOfConcurrent
 Concurrency        : not set by the chart (TTS: keep fewer than 5 concurrent requests per pod)
 {{- end }}
 Service type       : {{ .Values.service.type }} (port {{ .Values.service.port }})
+{{- if .Values.gatewayApi.enabled }}
+Route              : https://{{ .Values.gatewayApi.hostname | default (first .Values.gatewayApi.hostnames) }}{{ .Values.gatewayApi.path }}/ (Gateway {{ .Values.gatewayApi.parentRef.name }})
+{{- else if .Values.ingress.enabled }}
+Route              : {{ ternary "https" "http" .Values.ingress.tls.enabled }}://{{ .Values.ingress.host }}{{ .Values.ingress.path }}/ (Ingress)
+{{- end }}
 Node pool          : {{ if .Values.nodePool }}{{ .Values.nodePoolKey }}={{ .Values.nodePool }} (toleration + {{ .Values.nodePoolAffinity }} affinity){{ else }}not set (any node){{ end }}
 {{- if .Values.secretProviderClass.enabled }}
 Key Vault          : SecretProviderClass {{ include "speech-container.secretProviderClassName" . }} ({{ .Values.secretProviderClass.identity }} identity) syncs Secret {{ .Values.secretRef.name }}

@@ -5,32 +5,37 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Artifact Hub](https://img.shields.io/badge/Artifact%20Hub-speech--container-417598)](https://artifacthub.io)
 
-Helm chart for deploying **Azure AI Speech disconnected containers** (Speech-to-Text and Neural Text-to-Speech) on any Kubernetes platform.
+Helm chart for deploying **Azure AI Speech containers** (Speech-to-Text and Neural Text-to-Speech) on Kubernetes, with a tested path for **AKS behind Gateway API** (AKS app routing).
 
-This chart works on **AKS, EKS, GKE, OpenShift, and vanilla Kubernetes**. Azure-specific integrations (Key Vault, ACR, Workload Identity) are clearly marked as **AKS callouts** in the documentation — the core deployment flow stays platform-neutral.
+The containers run in **connected mode**: audio and text are processed inside your cluster, and usage is reported to your Azure AI Speech resource for billing. Disconnected (air-gapped) mode isn't supported by this chart; see the chart README, Appendix A. The chart uses standard Kubernetes APIs and also runs on EKS, GKE, OpenShift and vanilla Kubernetes.
 
 ---
 
 ## Quick start
 
 ```bash
-helm repo add speech-container https://osshaikh.github.io/speechcontainer
+HOST=speech.contoso.com
+helm repo add speech-container https://osshaikh.github.io/speechcontainer/
 helm repo update
+helm pull speech-container/speech-container --version 1.4.1 --untar && cd speech-container
 
 kubectl create namespace speech
 kubectl create secret generic speech-credentials -n speech \
-  --from-literal=billing="https://<your-resource>.cognitiveservices.azure.com/" \
-  --from-literal=apikey="<your-key>"
+  --from-literal=billing="<your Speech resource endpoint>" \
+  --from-literal=apikey="<your key>"
 
-helm install stt-en speech-container/speech-container -n speech \
-  -f https://raw.githubusercontent.com/Osshaikh/speechcontainer/main/charts/speech-container/examples/stt-en.yaml \
-  --set secretRef.enabled=true \
-  --set secretRef.name=speech-credentials
+# Shared Gateway (needs the TLS Secret speech-tls in the namespace)
+sed "s/speech.contoso.com/$HOST/" examples/gateway-approuting.yaml | kubectl apply -f -
+
+for rel in stt-hi stt-en tts-hi tts-en; do
+  helm upgrade --install $rel speech-container/speech-container -n speech --version 1.4.1 \
+    -f examples/$rel.yaml -f examples/approuting-gateway.yaml \
+    --set secretRef.enabled=true --set gatewayApi.hostname=$HOST \
+    --wait --timeout 20m
+done
 ```
 
-The examples create a ClusterIP Service. To call the containers from outside the cluster, add a routing overlay, for example AKS app routing with Gateway API: `-f examples/approuting-gateway.yaml --set gatewayApi.hostname=<your-hostname>`.
-
-Full installation guide, prerequisites (network whitelisting, node pools), and `helm install` examples → **[charts/speech-container/README.md](charts/speech-container/README.md)**.
+Step-by-step guide (prerequisites, TLS and DNS, Key Vault, tests through the Gateway, more languages, operations) → **[charts/speech-container/README.md](charts/speech-container/README.md)**.
 
 Voice-workload capacity planning (per-pod throughput, sizing for a target call volume, reference table up to 5M calls/month) → **[Capacity planning](#capacity-planning)** further down this README.
 
@@ -45,7 +50,7 @@ speechcontainer/
 │       ├── values.schema.json    # rejects unknown or mistyped values
 │       ├── README.md             # full install + ops guide
 │       ├── templates/
-│       └── examples/             # STT/TTS values for en-US, hi-IN, ta-IN + routing overlays
+│       └── examples/             # STT/TTS values (en-US, hi-IN, ta-IN), route overlays, Gateway manifest
 ├── CHANGELOG.md
 ├── CONTRIBUTING.md
 ├── SECURITY.md
@@ -81,12 +86,11 @@ Want a different locale (Telugu, Marathi, Bengali, etc.)? See the **"Adding addi
 
 ## Prerequisites at a glance
 
-1. **Azure AI Speech resource** with disconnected commitment tier (S0 SKU + Commitment Tiers blade)
-2. **Kubernetes cluster** ≥ 1.27 with four node pools — Hindi STT, other-language STT, Hindi TTS, other-language TTS (sized per the [Capacity planning](#capacity-planning) section below; fewer pools are supported via the chart's `nodePool` value)
-3. **Network egress** to `mcr.microsoft.com` and `<your-resource>.cognitiveservices.azure.com`
-4. **Helm** ≥ 3.10 and **kubectl** matching your cluster version
-
-> 💡 **AKS users:** A dedicated "Running on AKS" walkthrough is embedded in the chart README — Azure CLI commands for nodepools, taints, ACR mirroring, and Key Vault integration are all included.
+1. **Azure AI Speech resource** (S0) with key authentication enabled: its endpoint is the billing URL
+2. **Kubernetes cluster** ≥ 1.30 with four node pools — Hindi STT, other-language STT, Hindi TTS, other-language TTS (sized per the [Capacity planning](#capacity-planning) section below; fewer pools are supported via the chart's `nodePool` value)
+3. **Network egress, permanently**, to the host of your billing URL (usage is reported every 10–15 minutes) and to `mcr.microsoft.com` / `*.data.mcr.microsoft.com` (or your ACR)
+4. **On AKS:** Gateway API with app routing (`az aks update --enable-gateway-api --enable-app-routing-istio`), a hostname, a TLS certificate and a DNS record
+5. **Helm** ≥ 3.10 and **kubectl** matching your cluster version
 
 ---
 
@@ -96,7 +100,7 @@ Use these throughput figures (validated by Microsoft Speech engineering, confirm
 
 ### Per-container resource requirements
 
-Microsoft Learn — disconnected container host sizing per pod:
+Microsoft Learn — container host sizing per pod:
 
 | Workload | **Minimum** | **Recommended** | Notes |
 |---|---|---|---|
@@ -181,5 +185,5 @@ MIT See [LICENSE](LICENSE).
 
 ## Acknowledgements
 
-- Microsoft Azure AI Speech team for the disconnected container images
+- Microsoft Azure AI Speech team for the Speech container images
 - The Helm community for `chart-releaser-action`

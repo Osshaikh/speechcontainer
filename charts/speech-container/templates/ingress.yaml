@@ -2,6 +2,7 @@
 {{- $svcName := include "speech-container.fullname" . -}}
 {{- $svcPort := .Values.service.port | int -}}
 {{- $path := .Values.ingress.path | required "ingress.path is required when ingress.enabled=true (e.g. /stt/en-US)" -}}
+{{- $host := .Values.ingress.host | required "ingress.host is required when ingress.enabled=true (e.g. speech.contoso.com)" -}}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -27,11 +28,11 @@ spec:
   {{- if .Values.ingress.tls.enabled }}
   tls:
     - hosts:
-        - {{ .Values.ingress.host | quote }}
+        - {{ $host | quote }}
       secretName: {{ .Values.ingress.tls.secretName | required "ingress.tls.secretName is required when ingress.tls.enabled=true" }}
   {{- end }}
   rules:
-    - host: {{ .Values.ingress.host | quote }}
+    - host: {{ $host | quote }}
       http:
         paths:
           - path: {{ printf "%s(/|$)(.*)" $path }}

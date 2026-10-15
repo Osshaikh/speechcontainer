@@ -189,8 +189,8 @@ service:
 ingress:
   enabled: false
   className: nginx                    # ingressClassName (must match installed controller)
-  host: speech.bfl.internal           # shared hostname across all 4 releases
-  path: ""                            # REQUIRED per release (e.g. /stt/en-US)  -- set in examples/*.yaml
+  host: ""                            # REQUIRED when enabled: shared hostname across releases
+  path: ""                            # REQUIRED per release (e.g. /stt/en-US)
   # WebSocket / long-call timeouts (seconds). 1h covers most call-center sessions.
   proxyReadTimeout: "3600"
   proxySendTimeout: "3600"
@@ -218,9 +218,9 @@ gatewayApi:
     name: ""                          # e.g. speech-gateway
     namespace: ""                     # leave blank to use the release namespace
     sectionName: ""                   # optional: listener name on the Gateway
-  hostname: speech.example.com        # FQDN matched on the parent Gateway listener
+  hostname: ""                        # REQUIRED (or hostnames): FQDN matched on the parent Gateway listener
   hostnames: []                       # optional extra hostnames for the same route
-  path: ""                            # REQUIRED per release (e.g. /stt/en-US) — same semantics as ingress.path
+  path: ""                            # REQUIRED per release (e.g. /stt/en-US); set in examples/*.yaml
   # HTTPRoute timeouts (Gateway API v1.1+) — long for STT streaming sessions
   timeouts:
     request: "3600s"
