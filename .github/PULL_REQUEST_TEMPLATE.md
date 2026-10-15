@@ -14,7 +14,7 @@
 ## Checklist
 
 - [ ] `helm lint charts/speech-container` passes
-- [ ] `helm template` renders for all four example values (stt-en, stt-hi, tts-en, tts-hi)
+- [ ] `helm template` renders for every example values file, alone and with each overlay (the Lint workflow checks this)
 - [ ] Bumped `charts/speech-container/Chart.yaml` `version` per SemVer
 - [ ] Updated `CHANGELOG.md`
 - [ ] Updated `charts/speech-container/README.md` if user-facing surface changed

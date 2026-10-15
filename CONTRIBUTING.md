@@ -33,7 +33,7 @@ helm install stt-en charts/speech-container -n speech --create-namespace \
 ## PR checklist
 
 - [ ] `helm lint charts/speech-container` passes
-- [ ] `helm template` renders without error for all four example values files
+- [ ] `helm template` renders without error for every example values file and overlay (the Lint workflow runs them all)
 - [ ] If templates changed, ran a manual install on at least one K8s flavour
 - [ ] Bumped `Chart.yaml` `version` per SemVer (patch for bug fix, minor for new feature, major for breaking change)
 - [ ] Updated `CHANGELOG.md` under the new version heading

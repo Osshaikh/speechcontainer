@@ -1,40 +1,76 @@
 mode: stt
 
 image:
-  tag: 5.3.0-amd64-hi-in
+  tag: 5.4.0-amd64-hi-in
 
-# STT minimum sizing per Microsoft Learn host-resource guidance.
-# Limits inherit from chart values.yaml (8c / 16Gi).
+# STT sizing per Microsoft Learn: 4 GB base + 4-8 GB for the speech model,
+# which is memory-mapped and should stay in memory.
+# Request = guaranteed scheduling floor.
 resources:
   requests:
     cpu: "4"
-    memory: "4Gi"
+    memory: "8Gi"
+  limits:
+    cpu: "8"
+    memory: "16Gi"
 
-# Decoders = concurrent sessions per pod. Each decoder needs ~0.7-1.25 CPU.
-# For a 4-core request, 5 decoders keeps each decoder CPU-fed (low latency).
-# Raise to 8 only if you also raise resources.requests.cpu to 8.
+# Decoders = concurrent sessions per pod (sets DECODER_MAX_COUNT; STT only).
+# Each decoder needs ~0.7-1.25 CPU. For a 4-core request, 5 decoders keeps each
+# decoder CPU-fed (low latency). Raise to 8 only if you also raise
+# resources.requests.cpu to 8.
 concurrency:
   numberOfConcurrentRequest: 5
 
 replicaCount: 2
 
+# maxReplicas: keep it within what the node pool can actually schedule
+# (pool max nodes x pods per node), or the HPA plans pods that stay Pending.
 autoscaling:
   enabled: true
   minReplicas: 2
-  maxReplicas: 80
+  maxReplicas: 6
   targetCPUUtilizationPercentage: 75
+
+# Dedicated pools usually have no room for an extra surge pod, so replace one
+# pod at a time instead (one replica fewer during the rollout). With spare
+# capacity or the cluster autoscaler you can return to
+# maxSurge: 1 / maxUnavailable: 0.
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 0
+    maxUnavailable: 1
+
+# ---- Graceful drain for live calls -------------------------------------------
+# On scale-in, rollout or node upgrade the pod leaves the Service first, then
+# keeps serving open WebSocket sessions for preStopSleepSeconds before stopping.
+# Size it to your longest normal call. Must be < terminationGracePeriodSeconds.
+preStopSleepSeconds: 300
+terminationGracePeriodSeconds: 330
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
 
 service:
   type: ClusterIP
   port: 5000
 
+# ---- Exposure ---------------------------------------------------------------
+# Both routes are OFF here; turn one on with an overlay:
+#   -f examples/approuting-gateway.yaml   (recommended: AKS app routing, Gateway API)
+#   -f examples/agc-overrides.yaml        (Application Gateway for Containers)
+#   --set ingress.enabled=true            (an existing NGINX ingress controller)
 ingress:
-  enabled: true
+  enabled: false
   className: nginx
   host: speech.example.com
   path: /stt/hi-IN
 
+gatewayApi:
+  path: /stt/hi-IN
+
 # ---- Pod scheduling: dedicated Hindi STT node pool --------------------------
 # Pool tainted workload=stt-hi:NoSchedule and labelled workload=stt-hi.
-# The chart adds the matching toleration + soft node affinity (see stt-en.yaml).
+# The chart adds the matching toleration + node affinity (see stt-en.yaml).
 nodePool: stt-hi

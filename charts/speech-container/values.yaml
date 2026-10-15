@@ -7,6 +7,9 @@
 
 mode: stt          # stt | tts — drives image repo, port, default voice handling
 
+nameOverride: ""
+fullnameOverride: ""
+
 # ---- image -------------------------------------------------------------------
 image:
   registry: mcr.microsoft.com
@@ -15,19 +18,30 @@ image:
   repository: ""    # auto-derived from mode if blank (see _helpers.tpl)
   # Tag format: <major>.<minor>.<patch>-amd64-<locale>[-<voice>]
   # Examples:
-  #   STT en-US:        5.3.0-amd64-en-us
-  #   STT hi-IN:        5.3.0-amd64-hi-in
-  #   TTS Hindi Swara:  4.7.0-amd64-hi-in-swaraneural
-  #   TTS en-US Ava:    4.7.0-amd64-en-us-avaneural
-  #   TTS Tamil Pallavi:   4.7.0-amd64-ta-in-pallavineural
-  #   TTS Marathi Aarohi:  4.7.0-amd64-mr-in-aarohineural
-  # Note: new locales (ta-IN, mr-IN, te-IN, bn-IN, gu-IN, kn-IN, ml-IN, pa-IN, ur-IN, ...)
-  # ship ONLY on 4.7.0. Prefer 4.7.0 unless you must pin an older en-US/hi-IN voice.
-  tag: 5.3.0-amd64-en-us
+  #   STT en-US:        5.4.0-amd64-en-us
+  #   STT hi-IN:        5.4.0-amd64-hi-in
+  #   STT ta-IN:        5.3.0-amd64-ta-in      (no 5.4.0 tag for ta-IN yet)
+  #   TTS Hindi Swara:  4.9.0-amd64-hi-in-swaraneural
+  #   TTS en-US Ava:    4.9.0-amd64-en-us-avaneural
+  #   TTS Tamil Pallavi:   4.9.0-amd64-ta-in-pallavineural
+  #   TTS Marathi Aarohi:  4.9.0-amd64-mr-in-aarohineural
+  # STT versions are per-locale: check the tag exists on MCR before installing.
+  tag: 5.4.0-amd64-en-us
   pullPolicy: IfNotPresent
+  # Registry credentials for a private mirror (for example ACR):
+  #   pullSecrets:
+  #     - name: acr-pull
   pullSecrets: []
 
+# Alias for image.pullSecrets; both lists are combined.
+imagePullSecrets: []
+
 # ---- container args (passed as docker args at runtime) -----------------------
+# The container reads Eula, Billing and ApiKey as command-line arguments. With
+# secretRef enabled the key comes from a Secret (it is not shown by
+# `kubectl describe pod`), but it is still part of the running process's command
+# line, visible to anyone who can exec into the pod or inspect processes on the
+# node. Restrict pods/exec and node access accordingly.
 args:
   eula: accept                        # MUST be 'accept'
   billing: ""                         # https://<resource>.cognitiveservices.azure.com/
@@ -40,9 +54,40 @@ secretRef:
   billingKey: billing
   apiKeyKey: apikey
 
-# ---- concurrency knob (informational; resources below are authoritative) -----
+# ---- Azure Key Vault (Secrets Store CSI Driver) ------------------------------
+# Mounts a CSI volume so the Azure Key Vault provider syncs the billing URL and
+# API key into the Kubernetes Secret named in secretRef.name. Requires
+# secretRef.enabled=true and the AKS add-on azure-keyvault-secrets-provider.
+# The Secret only exists while at least one pod mounts the volume.
+secretProviderClass:
+  enabled: false
+  # Name of the SecretProviderClass. Defaults to the release fullname.
+  name: ""
+  # true  = the chart renders the SecretProviderClass from the settings below
+  # false = use an existing SecretProviderClass named `name`
+  create: true
+  keyVaultName: ""
+  tenantId: ""
+  # Identity used to read Key Vault:
+  #   addon    = the AKS add-on's managed identity (azurekeyvaultsecretsprovider-<cluster>),
+  #              client ID from:
+  #              az aks show -g <rg> -n <cluster> --query addonProfiles.azureKeyvaultSecretsProvider.identity.clientId -o tsv
+  #   workload = Microsoft Entra Workload ID; clientId is the user-assigned identity
+  #              federated to this release's service account
+  identity: addon
+  clientId: ""
+  # Key Vault secret names that hold the billing endpoint and the API key
+  billingSecretName: speech-billing
+  apiKeySecretName: speech-apikey
+  mountPath: /mnt/secrets-store
+
+# ---- STT decoder count -------------------------------------------------------
+# STT only: rendered as DECODER_MAX_COUNT (concurrent recognition sessions per
+# pod). Microsoft guidance: up to 2 sessions per core; use fewer for low latency.
+# Not used for TTS — Microsoft recommends fewer than 5 concurrent requests per
+# TTS container; control TTS concurrency at the caller and scale replicas instead.
 concurrency:
-  numberOfConcurrentRequest: 8        # STT: 2 sessions/core × 4-core request = 8; tune per CPU sizing
+  numberOfConcurrentRequest: 8
 
 # ---- resources — MS Learn aligned defaults -----------------------------------
 # Reference: https://learn.microsoft.com/azure/ai-services/speech-service/speech-container-howto
@@ -64,26 +109,57 @@ resources:
 
 # ---- environment variables forwarded to the container -----------------------
 env:
-  # The chart adds DECODER_MAX_COUNT automatically from concurrency.numberOfConcurrentRequest
+  # For STT the chart adds DECODER_MAX_COUNT from concurrency.numberOfConcurrentRequest.
   # Append additional environment variables here if needed.
   extra: []
   #   - name: ASPNETCORE_URLS
   #     value: "http://+:5000"
 
+# ---- extra pod metadata ------------------------------------------------------
+podLabels: {}
+podAnnotations: {}
+
 # ---- replicas / autoscaling --------------------------------------------------
 replicaCount: 2
 
+# CPU-based HPA. It reacts in minutes, slower than STT session bursts, and STT
+# saturates on decoders before CPU; keep warm capacity with minReplicas, or use
+# KEDA / custom metrics on active sessions. Set maxReplicas to what your node
+# pool and vCPU quota can actually hold.
 autoscaling:
-  enabled: true                       # HPA on by default — scale on CPU pressure
+  enabled: true
   minReplicas: 2
-  maxReplicas: 80
+  maxReplicas: 6
   targetCPUUtilizationPercentage: 75
   # Optional memory target — uncomment if you want to scale on memory too
   # targetMemoryUtilizationPercentage: 80
 
+# ---- rollout strategy --------------------------------------------------------
+# Default adds one new pod before removing an old one. On a pool with no spare
+# capacity for that extra pod (for example one 16-core node running 2 TTS pods
+# at 6 cores each), the rollout waits forever. Either give the pool spare
+# capacity (cluster autoscaler) or use maxSurge: 0 / maxUnavailable: 1, which
+# runs one replica fewer during the rollout.
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 1
+    maxUnavailable: 0
+
+# ---- graceful shutdown -------------------------------------------------------
+# When a pod is removed it leaves the Service endpoints first, so no new
+# sessions reach it. preStopSleepSeconds keeps it running that long so active
+# STT WebSocket sessions can finish before the container is stopped. Keep
+# terminationGracePeriodSeconds longer than the sleep. Uses the Kubernetes
+# preStop sleep action (Kubernetes 1.30+). 0 disables the preStop hook.
+terminationGracePeriodSeconds: 30
+preStopSleepSeconds: 0
+
 # ---- pod disruption budget ---------------------------------------------------
+# Created only when the release keeps at least 2 replicas (autoscaling.minReplicas
+# or replicaCount), so a single-replica install never blocks node drains.
 podDisruptionBudget:
-  enabled: false
+  enabled: true
   minAvailable: 1
 
 # ---- service -----------------------------------------------------------------
@@ -129,23 +205,21 @@ ingress:
     secretName: ""                    # name of pre-existing TLS secret (cert-manager or BYO)
 
 # ---- Gateway API (alternative to ingress) ------------------------------------
-# Use this for Application Gateway for Containers (AGC) on AKS, or any
-# Gateway API-compliant controller (Envoy Gateway, Cilium Gateway, Contour, etc.).
+# Use this for the AKS application routing add-on (GatewayClass approuting-istio,
+# see examples/approuting-gateway.yaml), Application Gateway for Containers, or
+# any other Gateway API implementation (Envoy Gateway, Cilium, Contour, ...).
 # Mutually exclusive with `ingress.enabled`. Renders an HTTPRoute that attaches
-# to a pre-existing Gateway resource you (or the platform) manage.
-#
-# Why this exists: ingress-nginx is in maintenance mode and Kubernetes is moving
-# to Gateway API. On AKS, AGC is the strategic replacement and speaks Gateway
-# API natively (not Ingress).
+# to a pre-existing Gateway resource you (or the platform) manage. TLS is
+# configured on the Gateway listener, so HTTPS/WSS works through this route.
 gatewayApi:
   enabled: false
   # Parent Gateway resource — must be pre-created in your cluster.
-  # For AGC: the ALB Controller provisions this from an ApplicationLoadBalancer CR.
   parentRef:
     name: ""                          # e.g. speech-gateway
     namespace: ""                     # leave blank to use the release namespace
     sectionName: ""                   # optional: listener name on the Gateway
   hostname: speech.example.com        # FQDN matched on the parent Gateway listener
+  hostnames: []                       # optional extra hostnames for the same route
   path: ""                            # REQUIRED per release (e.g. /stt/en-US) — same semantics as ingress.path
   # HTTPRoute timeouts (Gateway API v1.1+) — long for STT streaming sessions
   timeouts:
@@ -170,38 +244,77 @@ gatewayApi:
 # Leave empty (chart default) to schedule on any node.
 nodePool: ""
 nodePoolKey: workload
+# preferred = pods prefer their pool but may fall back to any untainted node
+#             (for example the system pool) when it is full or down.
+# required  = pods only run on their pool and stay Pending when it is full.
+nodePoolAffinity: preferred
+
+# Spreads replicas of a release across nodes (soft by default: ScheduleAnyway).
+# Set whenUnsatisfiable: DoNotSchedule to require it. Ignored when
+# topologySpreadConstraints below is set.
+topologySpread:
+  enabled: true
+  topologyKey: kubernetes.io/hostname
+  maxSkew: 1
+  whenUnsatisfiable: ScheduleAnyway
 
 # Advanced overrides. Entries in `tolerations` are added to the nodePool
 # toleration. A non-empty `affinity` REPLACES the generated nodePool affinity.
+# A non-empty `topologySpreadConstraints` replaces the generated spread.
 nodeSelector: {}
 tolerations: []
 affinity: {}
+topologySpreadConstraints: []
 priorityClassName: ""
 
 # ---- probes ------------------------------------------------------------------
+# startupProbe covers the slow model load; liveness and readiness only start
+# once it succeeds.
+startupProbe:
+  enabled: true
+  path: /ready
+  periodSeconds: 10
+  failureThreshold: 60                # up to 10 minutes to load the model
+
 readinessProbe:
   enabled: true
   path: /ready                        # supported on STT/TTS 4.x+
-  initialDelaySeconds: 60
+  initialDelaySeconds: 0
   periodSeconds: 30
   failureThreshold: 6
 
+# tcpSocket checks the process is listening, so an outage of the Azure billing
+# endpoint can't restart every pod. httpGet uses `path` (for example /status,
+# which reports the API key validation state).
 livenessProbe:
   enabled: true
+  type: tcpSocket                     # tcpSocket | httpGet
   path: /status
-  initialDelaySeconds: 120
+  initialDelaySeconds: 0
   periodSeconds: 60
   failureThreshold: 3
 
 # ---- security context --------------------------------------------------------
+# The STT and TTS images run as the non-root user `nonroot` (UID/GID 65532).
+# Kubernetes can only enforce runAsNonRoot for a numeric user, so runAsUser is set.
 podSecurityContext:
-  runAsNonRoot: false                 # Speech containers require root for model load
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
 containerSecurityContext:
   allowPrivilegeEscalation: false
   readOnlyRootFilesystem: false
+  capabilities:
+    drop:
+      - ALL
 
 # ---- service account ---------------------------------------------------------
+# The containers never call the Kubernetes API, so the token isn't mounted.
+# Workload identity still works: its webhook injects its own token.
 serviceAccount:
   create: true
   name: ""                            # auto-derived if blank
   annotations: {}
+  automountServiceAccountToken: false

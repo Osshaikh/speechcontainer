@@ -14,10 +14,19 @@
 {{- end -}}
 {{- end -}}
 
+{{/*
+  Version of the running image: the x.y.z prefix of image.tag, falling back to
+  the chart appVersion when the tag has no version prefix.
+*/}}
+{{- define "speech-container.version" -}}
+{{- $version := regexFind "^[0-9]+\\.[0-9]+\\.[0-9]+" (.Values.image.tag | toString) -}}
+{{- default .Chart.AppVersion $version -}}
+{{- end -}}
+
 {{- define "speech-container.labels" -}}
 app.kubernetes.io/name: {{ include "speech-container.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
-app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+app.kubernetes.io/version: {{ include "speech-container.version" . | quote }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" }}
 speech.azure.com/mode: {{ .Values.mode | quote }}
@@ -66,12 +75,23 @@ azure-cognitive-services/speechservices/neural-text-to-speech
 
 {{/*
   Affinity: an explicit .Values.affinity wins; otherwise nodePool produces a
-  soft (preferred) node affinity for nodes labelled <nodePoolKey>=<nodePool>.
+  node affinity for nodes labelled <nodePoolKey>=<nodePool>, preferred (soft)
+  or required depending on .Values.nodePoolAffinity.
 */}}
 {{- define "speech-container.affinity" -}}
 {{- if .Values.affinity -}}
 {{- toYaml .Values.affinity -}}
 {{- else if .Values.nodePool -}}
+{{- if eq .Values.nodePoolAffinity "required" -}}
+nodeAffinity:
+  requiredDuringSchedulingIgnoredDuringExecution:
+    nodeSelectorTerms:
+      - matchExpressions:
+          - key: {{ .Values.nodePoolKey | quote }}
+            operator: In
+            values:
+              - {{ .Values.nodePool | quote }}
+{{- else if eq .Values.nodePoolAffinity "preferred" -}}
 nodeAffinity:
   preferredDuringSchedulingIgnoredDuringExecution:
     - weight: 100
@@ -81,6 +101,51 @@ nodeAffinity:
             operator: In
             values:
               - {{ .Values.nodePool | quote }}
+{{- else -}}
+{{- fail (printf "nodePoolAffinity must be 'preferred' or 'required', got %q" .Values.nodePoolAffinity) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+  Topology spread: explicit .Values.topologySpreadConstraints win; otherwise a
+  single constraint spreading this release's pods across .topologySpread.topologyKey.
+*/}}
+{{- define "speech-container.topologySpreadConstraints" -}}
+{{- if .Values.topologySpreadConstraints -}}
+{{- toYaml .Values.topologySpreadConstraints -}}
+{{- else if .Values.topologySpread.enabled -}}
+- maxSkew: {{ .Values.topologySpread.maxSkew }}
+  topologyKey: {{ .Values.topologySpread.topologyKey }}
+  whenUnsatisfiable: {{ .Values.topologySpread.whenUnsatisfiable }}
+  labelSelector:
+    matchLabels: {{- include "speech-container.selectorLabels" . | nindent 6 }}
+{{- end -}}
+{{- end -}}
+
+{{/*
+  Image pull secrets from image.pullSecrets and the top-level imagePullSecrets alias.
+*/}}
+{{- define "speech-container.imagePullSecrets" -}}
+{{- $secrets := concat (.Values.image.pullSecrets | default list) (.Values.imagePullSecrets | default list) | uniq -}}
+{{- with $secrets -}}
+{{- toYaml . -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+  Name of the SecretProviderClass used for the Key Vault CSI volume.
+*/}}
+{{- define "speech-container.secretProviderClassName" -}}
+{{- default (include "speech-container.fullname" .) .Values.secretProviderClass.name -}}
+{{- end -}}
+
+{{/*
+  True when pods should use Microsoft Entra Workload ID for Key Vault access.
+*/}}
+{{- define "speech-container.useWorkloadIdentity" -}}
+{{- if and .Values.secretProviderClass.enabled (eq .Values.secretProviderClass.identity "workload") -}}
+true
 {{- end -}}
 {{- end -}}
 

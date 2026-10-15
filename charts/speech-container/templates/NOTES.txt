@@ -4,9 +4,16 @@ Mode               : {{ .Values.mode }}
 Image              : {{ include "speech-container.image.full" . }}
 CPU request/limit  : {{ .Values.resources.requests.cpu }} / {{ .Values.resources.limits.cpu }}
 Memory request/lim : {{ .Values.resources.requests.memory }} / {{ .Values.resources.limits.memory }}
+{{- if eq .Values.mode "stt" }}
 Concurrency        : DECODER_MAX_COUNT={{ .Values.concurrency.numberOfConcurrentRequest }}
+{{- else }}
+Concurrency        : not set by the chart (TTS: keep fewer than 5 concurrent requests per pod)
+{{- end }}
 Service type       : {{ .Values.service.type }} (port {{ .Values.service.port }})
-Node pool          : {{ if .Values.nodePool }}{{ .Values.nodePoolKey }}={{ .Values.nodePool }} (toleration + soft affinity){{ else }}not set (any node){{ end }}
+Node pool          : {{ if .Values.nodePool }}{{ .Values.nodePoolKey }}={{ .Values.nodePool }} (toleration + {{ .Values.nodePoolAffinity }} affinity){{ else }}not set (any node){{ end }}
+{{- if .Values.secretProviderClass.enabled }}
+Key Vault          : SecretProviderClass {{ include "speech-container.secretProviderClassName" . }} ({{ .Values.secretProviderClass.identity }} identity) syncs Secret {{ .Values.secretRef.name }}
+{{- end }}
 
 Watch rollout:
   kubectl rollout status deployment/{{ include "speech-container.fullname" . }} -n {{ .Release.Namespace }}

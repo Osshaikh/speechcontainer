@@ -9,10 +9,13 @@ on:
     branches: [main]
     paths:
       - 'charts/**'
+      - '.github/workflows/lint.yml'
 
 jobs:
   lint:
     runs-on: ubuntu-latest
+    env:
+      CHART: charts/speech-container
     steps:
       - uses: actions/checkout@v4
         with:
@@ -24,36 +27,85 @@ jobs:
           version: v3.14.0
 
       - name: helm lint
-        run: helm lint charts/speech-container
+        run: helm lint "$CHART" --set secretRef.enabled=true
 
-      - name: helm template (stt-en)
+      - name: helm template (every example, alone and with every overlay)
         run: |
-          helm template test charts/speech-container \
-            -f charts/speech-container/examples/stt-en.yaml \
-            --set secretRef.enabled=true \
-            --set secretRef.name=test \
-            > /dev/null
+          set -euo pipefail
+          for ex in stt-en stt-hi stt-ta tts-en tts-hi tts-ta; do
+            for ov in "" approuting-gateway agc-overrides internal-lb prod-overrides; do
+              args=(-f "$CHART/examples/$ex.yaml")
+              [ -n "$ov" ] && args+=(-f "$CHART/examples/$ov.yaml")
+              echo "::group::$ex ${ov:-(no overlay)}"
+              helm template test "$CHART" "${args[@]}" \
+                --set secretRef.enabled=true --set secretRef.name=test > /dev/null
+              echo "::endgroup::"
+            done
+          done
 
-      - name: helm template (stt-hi)
+      - name: helm template (option combinations)
         run: |
-          helm template test charts/speech-container \
-            -f charts/speech-container/examples/stt-hi.yaml \
-            --set secretRef.enabled=true \
-            --set secretRef.name=test \
-            > /dev/null
+          set -euo pipefail
+          base=(--set secretRef.enabled=true)
+          # Key Vault, add-on identity (chart creates the SecretProviderClass)
+          helm template t "$CHART" "${base[@]}" \
+            --set secretProviderClass.enabled=true \
+            --set secretProviderClass.keyVaultName=kv \
+            --set secretProviderClass.tenantId=tid \
+            --set secretProviderClass.clientId=cid | grep -q 'kind: SecretProviderClass'
+          # Key Vault, workload identity
+          helm template t "$CHART" "${base[@]}" \
+            --set secretProviderClass.enabled=true \
+            --set secretProviderClass.identity=workload \
+            --set secretProviderClass.keyVaultName=kv \
+            --set secretProviderClass.tenantId=tid \
+            --set secretProviderClass.clientId=cid | grep -q 'azure.workload.identity/use: "true"'
+          # Key Vault, existing shared SecretProviderClass
+          helm template t "$CHART" "${base[@]}" \
+            --set secretProviderClass.enabled=true \
+            --set secretProviderClass.create=false \
+            --set secretProviderClass.name=shared | grep -q 'secretProviderClass: shared'
+          # Required node affinity, pull-secret alias, liveness on /status
+          helm template t "$CHART" "${base[@]}" --set nodePool=stt-hi \
+            --set nodePoolAffinity=required | grep -q requiredDuringSchedulingIgnoredDuringExecution
+          helm template t "$CHART" "${base[@]}" \
+            --set 'imagePullSecrets[0].name=acr' | grep -q 'name: acr'
+          helm template t "$CHART" "${base[@]}" --set livenessProbe.type=httpGet | grep -q 'path: /status'
+          # TTS must not get the STT-only DECODER_MAX_COUNT
+          ! helm template t "$CHART" -f "$CHART/examples/tts-en.yaml" "${base[@]}" | grep -q DECODER_MAX_COUNT
 
-      - name: helm template (tts-en)
+      - name: helm template (invalid values must fail)
         run: |
-          helm template test charts/speech-container \
-            -f charts/speech-container/examples/tts-en.yaml \
-            --set secretRef.enabled=true \
-            --set secretRef.name=test \
-            > /dev/null
+          set -uo pipefail
+          expect_fail() {
+            if helm template t "$CHART" --set secretRef.enabled=true "$@" > /dev/null 2>&1; then
+              echo "::error::expected failure for: $*"; exit 1
+            fi
+          }
+          expect_fail --set imagePullSecret=typo              # unknown key (schema)
+          expect_fail --set mode=asr                          # bad enum (schema)
+          expect_fail --set nodePool=x --set nodePoolAffinity=hard
+          expect_fail --set preStopSleepSeconds=60 --set terminationGracePeriodSeconds=30
+          expect_fail --set secretProviderClass.enabled=true  # missing Key Vault name / tenant / client ID
+          expect_fail --set gatewayApi.enabled=true --set gatewayApi.parentRef.name=gw \
+            --set gatewayApi.path=/stt/en-US --set gatewayApi.hostname=""
 
-      - name: helm template (tts-hi)
+      - name: Image tags exist on MCR
         run: |
-          helm template test charts/speech-container \
-            -f charts/speech-container/examples/tts-hi.yaml \
-            --set secretRef.enabled=true \
-            --set secretRef.name=test \
-            > /dev/null
+          set -euo pipefail
+          # MCR allows anonymous manifest reads; HEAD returns 200 if the tag exists, 404 if not.
+          check() {
+            local repo=$1 tag=$2
+            if curl -fsSI -o /dev/null \
+                -H 'Accept: application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.manifest.v1+json' \
+                "https://mcr.microsoft.com/v2/$repo/manifests/$tag"; then
+              echo "ok  $repo:$tag"
+            else
+              echo "::error::missing on MCR: $repo:$tag"; return 1
+            fi
+          }
+          stt=azure-cognitive-services/speechservices/speech-to-text
+          tts=azure-cognitive-services/speechservices/neural-text-to-speech
+          check "$stt" "$(yq '.image.tag' "$CHART/values.yaml")"
+          for f in "$CHART"/examples/stt-*.yaml; do check "$stt" "$(yq '.image.tag' "$f")"; done
+          for f in "$CHART"/examples/tts-*.yaml; do check "$tts" "$(yq '.image.tag' "$f")"; done

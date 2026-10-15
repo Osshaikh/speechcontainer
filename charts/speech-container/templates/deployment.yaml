@@ -1,3 +1,9 @@
+{{- if and .Values.secretProviderClass.enabled (not .Values.secretRef.enabled) -}}
+{{- fail "secretProviderClass.enabled=true requires secretRef.enabled=true: the Key Vault provider syncs the billing URL and API key into the Secret named by secretRef.name" -}}
+{{- end -}}
+{{- if and (gt (int .Values.preStopSleepSeconds) 0) (le (int .Values.terminationGracePeriodSeconds) (int .Values.preStopSleepSeconds)) -}}
+{{- fail "terminationGracePeriodSeconds must be greater than preStopSleepSeconds, otherwise the pod is killed before the preStop sleep ends" -}}
+{{- end -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -10,21 +16,31 @@ spec:
   {{- end }}
   selector:
     matchLabels: {{- include "speech-container.selectorLabels" . | nindent 6 }}
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 0
+  {{- with .Values.strategy }}
+  strategy: {{- toYaml . | nindent 4 }}
+  {{- end }}
   template:
     metadata:
-      labels: {{- include "speech-container.labels" . | nindent 8 }}
+      labels:
+        {{- include "speech-container.labels" . | nindent 8 }}
+        {{- if include "speech-container.useWorkloadIdentity" . }}
+        azure.workload.identity/use: "true"
+        {{- end }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations: {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
       serviceAccountName: {{ include "speech-container.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
       {{- with .Values.podSecurityContext }}
       securityContext: {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.image.pullSecrets }}
-      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- with (include "speech-container.imagePullSecrets" .) }}
+      imagePullSecrets: {{- . | nindent 8 }}
       {{- end }}
       {{- with .Values.priorityClassName }}
       priorityClassName: {{ . }}
@@ -37,6 +53,9 @@ spec:
       {{- end }}
       {{- with (include "speech-container.affinity" .) }}
       affinity: {{- . | nindent 8 }}
+      {{- end }}
+      {{- with (include "speech-container.topologySpreadConstraints" .) }}
+      topologySpreadConstraints: {{- . | nindent 8 }}
       {{- end }}
       containers:
         - name: {{ .Values.mode }}
@@ -58,9 +77,17 @@ spec:
             - name: http
               containerPort: {{ .Values.service.targetPort }}
               protocol: TCP
+          {{- if gt (int .Values.preStopSleepSeconds) 0 }}
+          lifecycle:
+            preStop:
+              sleep:
+                seconds: {{ .Values.preStopSleepSeconds }}
+          {{- end }}
           env:
+            {{- if eq .Values.mode "stt" }}
             - name: DECODER_MAX_COUNT
               value: "{{ .Values.concurrency.numberOfConcurrentRequest }}"
+            {{- end }}
             {{- if .Values.secretRef.enabled }}
             - name: BILLING_ENDPOINT
               valueFrom:
@@ -83,6 +110,14 @@ spec:
             limits:
               cpu: {{ .Values.resources.limits.cpu | quote }}
               memory: {{ .Values.resources.limits.memory | quote }}
+          {{- if .Values.startupProbe.enabled }}
+          startupProbe:
+            httpGet:
+              path: {{ .Values.startupProbe.path }}
+              port: http
+            periodSeconds: {{ .Values.startupProbe.periodSeconds }}
+            failureThreshold: {{ .Values.startupProbe.failureThreshold }}
+          {{- end }}
           {{- if .Values.readinessProbe.enabled }}
           readinessProbe:
             httpGet:
@@ -94,10 +129,32 @@ spec:
           {{- end }}
           {{- if .Values.livenessProbe.enabled }}
           livenessProbe:
+            {{- if eq .Values.livenessProbe.type "tcpSocket" }}
+            tcpSocket:
+              port: http
+            {{- else if eq .Values.livenessProbe.type "httpGet" }}
             httpGet:
               path: {{ .Values.livenessProbe.path }}
               port: http
+            {{- else }}
+            {{- fail (printf "livenessProbe.type must be 'tcpSocket' or 'httpGet', got %q" .Values.livenessProbe.type) }}
+            {{- end }}
             initialDelaySeconds: {{ .Values.livenessProbe.initialDelaySeconds }}
             periodSeconds: {{ .Values.livenessProbe.periodSeconds }}
             failureThreshold: {{ .Values.livenessProbe.failureThreshold }}
           {{- end }}
+          {{- if .Values.secretProviderClass.enabled }}
+          volumeMounts:
+            - name: secrets-store
+              mountPath: {{ .Values.secretProviderClass.mountPath }}
+              readOnly: true
+          {{- end }}
+      {{- if .Values.secretProviderClass.enabled }}
+      volumes:
+        - name: secrets-store
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: {{ include "speech-container.secretProviderClassName" . }}
+      {{- end }}

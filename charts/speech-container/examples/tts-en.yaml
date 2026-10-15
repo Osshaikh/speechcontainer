@@ -1,36 +1,68 @@
 mode: tts
 
 image:
-  # Voice: AvaNeural (en-US female). Latest tag verified on MCR.
-  tag: 4.7.0-amd64-en-us-avaneural
+  # Voice: AvaNeural (en-US female).
+  tag: 4.9.0-amd64-en-us-avaneural
 
-# Neural TTS minimum sizing per Microsoft Learn host-resource guidance.
-# Neural voices need more CPU + memory than STT for waveform synthesis.
-# Limits inherit from chart values.yaml (8c / 16Gi).
+# Neural TTS sizing per Microsoft Learn host-resource guidance (6 core / 12 GB
+# minimum). Limits inherit from chart values.yaml (8c / 16Gi). Multilingual
+# voices (for example en-US-AvaMultilingualNeural) need 24 GB: raise
+# resources.limits.memory to 24Gi for those.
 resources:
   requests:
     cpu: "6"
     memory: "12Gi"
 
-concurrency:
-  numberOfConcurrentRequest: 6
+# TTS has no server-side concurrency setting. Microsoft recommends fewer than
+# 5 concurrent requests per 8-core container: cap it at the gateway or in the
+# client, and size replicas for the peak.
 
 replicaCount: 2
 
+# maxReplicas: keep it within what the node pool can actually schedule
+# (pool max nodes x pods per node), or the HPA plans pods that stay Pending.
 autoscaling:
   enabled: true
   minReplicas: 2
-  maxReplicas: 80
+  maxReplicas: 6
   targetCPUUtilizationPercentage: 75
+
+# Dedicated pools usually have no room for an extra surge pod, so replace one
+# pod at a time instead (one replica fewer during the rollout). With spare
+# capacity or the cluster autoscaler you can return to
+# maxSurge: 1 / maxUnavailable: 0.
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 0
+    maxUnavailable: 1
+
+# ---- Graceful drain ----------------------------------------------------------
+# TTS requests are short, so a brief drain is enough to finish in-flight
+# synthesis. Must be < terminationGracePeriodSeconds.
+preStopSleepSeconds: 15
+terminationGracePeriodSeconds: 45
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
 
 service:
   type: ClusterIP
   port: 5000
 
+# ---- Exposure ---------------------------------------------------------------
+# Both routes are OFF here; turn one on with an overlay:
+#   -f examples/approuting-gateway.yaml   (recommended: AKS app routing, Gateway API)
+#   -f examples/agc-overrides.yaml        (Application Gateway for Containers)
+#   --set ingress.enabled=true            (an existing NGINX ingress controller)
 ingress:
-  enabled: true
+  enabled: false
   className: nginx
   host: speech.example.com
+  path: /tts/en-US
+
+gatewayApi:
   path: /tts/en-US
 
 # ---- Pod scheduling: shared non-Hindi TTS node pool -------------------------
@@ -38,9 +70,8 @@ ingress:
 #   az aks nodepool add ... --name ttsother \
 #     --node-taints workload=tts-other:NoSchedule \
 #     --labels workload=tts-other
-# The chart turns `nodePool` into:
-#   - a toleration       -> lets this pod LAND on the tts-other tainted nodes
-#   - soft nodeAffinity  -> PREFERS tts-other nodes (weight 100), falls back to
-#     any untainted node if the pool is unavailable (avoids stuck Pending)
-# Two-pool cluster (workload=tts)? Set nodePool: tts instead.
+# The chart turns `nodePool` into a toleration for that taint plus node
+# affinity for that label (preferred by default; set nodePoolAffinity: required
+# to never fall back to other nodes). Two-pool cluster (workload=tts)? Set
+# nodePool: tts instead.
 nodePool: tts-other

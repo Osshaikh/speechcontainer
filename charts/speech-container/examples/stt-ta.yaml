@@ -1,34 +1,71 @@
 mode: stt
 
 image:
+  # ta-IN has no 5.4.0 image on MCR yet; 5.3.0 is the latest ta-IN tag.
   tag: 5.3.0-amd64-ta-in
 
-# STT minimum sizing per Microsoft Learn host-resource guidance.
-# Request = guaranteed scheduling floor. Limits inherit from chart values.yaml (8c / 16Gi).
+# STT sizing per Microsoft Learn: 4 GB base + 4-8 GB for the speech model,
+# which is memory-mapped and should stay in memory.
+# Request = guaranteed scheduling floor.
 resources:
   requests:
     cpu: "4"
-    memory: "4Gi"
+    memory: "8Gi"
+  limits:
+    cpu: "8"
+    memory: "16Gi"
 
+# Decoders = concurrent sessions per pod (sets DECODER_MAX_COUNT; STT only).
 concurrency:
   numberOfConcurrentRequest: 8
 
 replicaCount: 2
 
+# maxReplicas: keep it within what the node pool can actually schedule
+# (pool max nodes x pods per node), or the HPA plans pods that stay Pending.
 autoscaling:
   enabled: true
   minReplicas: 2
-  maxReplicas: 80
+  maxReplicas: 6
   targetCPUUtilizationPercentage: 75
+
+# Dedicated pools usually have no room for an extra surge pod, so replace one
+# pod at a time instead (one replica fewer during the rollout). With spare
+# capacity or the cluster autoscaler you can return to
+# maxSurge: 1 / maxUnavailable: 0.
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 0
+    maxUnavailable: 1
+
+# ---- Graceful drain for live calls -------------------------------------------
+# On scale-in, rollout or node upgrade the pod leaves the Service first, then
+# keeps serving open WebSocket sessions for preStopSleepSeconds before stopping.
+# Size it to your longest normal call. Must be < terminationGracePeriodSeconds.
+preStopSleepSeconds: 300
+terminationGracePeriodSeconds: 330
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
 
 service:
   type: ClusterIP
   port: 5000
 
+# ---- Exposure ---------------------------------------------------------------
+# Both routes are OFF here; turn one on with an overlay:
+#   -f examples/approuting-gateway.yaml   (recommended: AKS app routing, Gateway API)
+#   -f examples/agc-overrides.yaml        (Application Gateway for Containers)
+#   --set ingress.enabled=true            (an existing NGINX ingress controller)
 ingress:
-  enabled: true
+  enabled: false
   className: nginx
   host: speech.example.com
+  path: /stt/ta-IN
+
+gatewayApi:
   path: /stt/ta-IN
 
 # Pod scheduling: shared non-Hindi STT pool (workload=stt-other taint + label).

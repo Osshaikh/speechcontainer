@@ -5,6 +5,49 @@ All notable changes to the `speech-container` Helm chart are documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-10-15
+
+Fixes from a deployment review of chart 1.3.0 on AKS. Review item IDs (A = incorrect, B = missing, C = docs) are in brackets. Includes the unreleased 1.3.1 STT memory change.
+
+### Added
+- **Azure Key Vault integration** [A2]. `secretProviderClass.enabled=true` now renders a `SecretProviderClass` (`secretProviderClass.create`) and mounts the Secrets Store CSI volume into the pod, so the driver syncs the billing URL and API key into the Secret named by `secretRef.name`. Supports the AKS add-on identity (`identity: addon`, default) and Workload Identity (`identity: workload`, which also adds the pod label and ServiceAccount annotation). Template fails if Key Vault is enabled without `secretRef.enabled=true`, or without vault name, tenant ID or client ID.
+- **`values.schema.json`** [B9]. Unknown or mistyped keys and invalid choices now fail at install time instead of being ignored.
+- **`strategy`** value: rollout strategy is configurable [A1].
+- **`terminationGracePeriodSeconds`** and **`preStopSleepSeconds`** (native `preStop` sleep, Kubernetes 1.30+) for draining live calls [B3]. Template fails if the sleep isn't shorter than the grace period.
+- **`startupProbe`** (`GET /ready`, up to 10 min) for model load [B6].
+- **`topologySpread`** (on by default, `kubernetes.io/hostname`, `ScheduleAnyway`) and **`topologySpreadConstraints`** [B1].
+- **`nodePoolAffinity`** (`preferred` | `required`) [B2].
+- **`gatewayApi.hostnames`** for extra HTTPRoute hostnames [B10].
+- **`examples/approuting-gateway.yaml`**: overlay for AKS app routing with Gateway API (`approuting-istio`), HTTPS listener, 3600 s timeouts [B10].
+- Top-level **`imagePullSecrets`**, merged with `image.pullSecrets` [A3].
+- **`nameOverride`**, **`fullnameOverride`**, **`podLabels`**, **`podAnnotations`** (documented before but not implemented).
+- Lint workflow renders every example with every overlay, tests option combinations and invalid values, and checks every pinned image tag exists on MCR [A7].
+
+### Changed (defaults)
+- **Security context** [A4]: `runAsNonRoot: true`, `runAsUser`/`runAsGroup: 65532` (the images' `nonroot` user), `seccompProfile: RuntimeDefault`, `capabilities.drop: [ALL]`. Passes the Kubernetes "restricted" Pod Security Standard.
+- **ServiceAccount token** no longer mounted (`serviceAccount.automountServiceAccountToken: false`) [B13].
+- **Liveness probe** is a TCP check on port 5000 (`livenessProbe.type: tcpSocket`) instead of `GET /status`, which reports API key validation [B5]. `livenessProbe.type: httpGet` restores the old behaviour. Liveness and readiness `initialDelaySeconds` are now 0 because the startup probe covers model load.
+- **`DECODER_MAX_COUNT`** is set only for `mode: stt` [A5]. TTS examples no longer set `concurrency`.
+- **PodDisruptionBudget** on by default (`minAvailable: 1`), rendered only when the release keeps at least 2 replicas [B4].
+- **`autoscaling.maxReplicas`** 6 (was 80) in chart and examples [B11].
+- **`app.kubernetes.io/version`** label is taken from the image tag (for example `4.9.0` for TTS) instead of `Chart.AppVersion` [A8].
+- **Image tags** [A7]: STT 5.4.0 (en-US, hi-IN; ta-IN stays on 5.3.0, the latest ta-IN tag), TTS 4.9.0 (AvaNeural, SwaraNeural, PallaviNeural). `appVersion` 5.4.0.
+- **STT examples** request **8Gi** memory (was 4Gi) with an explicit **16Gi** limit [A6]. Microsoft Learn sizes STT at 4 GB plus 4-8 GB for the memory-mapped speech model.
+- **Examples**: rollout `maxSurge: 0` / `maxUnavailable: 1` so upgrades finish on full dedicated pools [A1]; drain settings (STT `preStopSleepSeconds: 300`, grace 330 s; TTS 15 s / 45 s) [B3]; PDB enabled [B4]; **NGINX Ingress off** — pick a routing overlay instead [B10]; `gatewayApi.path` set per language.
+- HTTPRoute and `agc-overrides.yaml` / `internal-lb.yaml` comments no longer reference the removed AGC README section or chart 1.2.7/1.3.0 [C8].
+
+### Docs
+- Chart README: Key Vault section rewritten for the implemented values (add-on and Workload Identity) [A2, C2]; new "Routing with AKS app routing (Gateway API)" section with the Gateway, internal load balancer and SDK `endpoint` usage [B10]; values tables updated (`image.pullSecrets` / `imagePullSecrets`, `replicaCount` 2, `minReplicas` 2, `maxReplicas` 6, new keys) [C1, C3, C4]; STT test uses the Speech SDK instead of `curl -X POST` (STT is WebSocket only) [C7]; TTS concurrency guidance [C5]; image tags [C6]; new "Production operations" section (drain, rollouts, HPA limits, TTS warm-up [B7], weekly TTS restart [B8], multilingual voices 24 GB and image disk/pre-pull [B12], security defaults); API key command-line exposure documented [A9].
+
+### Upgrade notes
+- **The examples no longer create an NGINX Ingress.** Add `-f examples/approuting-gateway.yaml` (or `agc-overrides.yaml`), or `--set ingress.enabled=true` to keep NGINX. Without one, `helm upgrade` deletes the existing Ingress.
+- **Unknown keys now fail.** Remove misspelled or unsupported keys from your values files. The most common is `imagePullSecrets` placed under `image` (use `image.pullSecrets`, or top-level `imagePullSecrets`).
+- **Non-root pods.** If you pull from a mirror that rebuilt the images with a different user, set `podSecurityContext.runAsUser`/`runAsGroup` to match, or null them. On OpenShift `restricted-v2`, null them so OpenShift assigns the UID.
+- **Each STT pod reserves 4Gi more memory.** On a 16-core / 32 GB STT node, CPU requests (4 cores) still limit placement to 3 pods, which fit within 8Gi each.
+- **`preStopSleepSeconds` needs Kubernetes 1.30+.** On older clusters set it to 0.
+- **Pods using a `nodePool`** with `topologySpread` on and a 1-node pool still schedule (`ScheduleAnyway`), but both replicas share the node; add a second node for node-level HA.
+- Upgrade with your example file plus overlay rather than `--reuse-values`, so the new defaults apply.
+
 ## [1.3.0] - 2026-10-08
 
 ### Added

@@ -6,8 +6,8 @@ Replaces the abandoned `microsoft/cognitive-services-speech-onpremise` chart (v0
 
 - **Chart repo**: `https://osshaikh.github.io/speechcontainer/`
 - **Source**: `https://github.com/Osshaikh/speechcontainer`
-- **App version**: 5.3.0 (STT) / 4.7.0 (TTS — current line; some legacy en-US/hi-IN voices also published on 4.6.0). New locales (ta-IN, mr-IN, te-IN, bn-IN, gu-IN, kn-IN, ml-IN, pa-IN, ur-IN, …) **ship only on 4.7.0** — always prefer 4.7.0 unless you have a specific reason to pin an older voice. See [image references](#image--documentation-references) and the [tag lookup helper](#tag-lookup-helper-before-installing-a-new-locale).
-- **Chart version**: 1.3.0
+- **App version**: STT 5.4.0 (en-US, hi-IN; STT versions differ per locale, for example ta-IN is still on 5.3.0) / TTS 4.9.0 (en-US AvaNeural, hi-IN SwaraNeural, ta-IN PallaviNeural). See [image references](#image--documentation-references) and the [tag lookup helper](#tag-lookup-helper-before-installing-a-new-locale).
+- **Chart version**: 1.4.0
 - **Helm**: 3.10+ (Helm 4.x also tested and supported)
 
 ---
@@ -24,15 +24,16 @@ Replaces the abandoned `microsoft/cognitive-services-speech-onpremise` chart (v0
    - [Node pools, taints & labels](#3-node-pools-taints--labels-four-pool-pattern)
    - [Speech credentials secret](#4-speech-credentials-secret)
    - [Azure Key Vault integration (AKS)](#azure-key-vault-integration-aks)
-   - [Ingress controller](#5-ingress-controller-or-gateway-api)
+   - [Routing: Gateway API or Ingress](#5-routing-gateway-api-or-ingress)
 6. [Installing the chart](#installing-the-chart)
 7. [Configurable values reference](#configurable-values-reference)
 8. [Install command examples](#install-command-examples)
 9. [Adding additional language containers](#adding-additional-language-containers)
 10. [Verifying the install](#verifying-the-install)
-11. [Upgrading & rolling back](#upgrading--rolling-back)
-12. [Uninstalling](#uninstalling)
-13. [Troubleshooting](#troubleshooting)
+11. [Production operations](#production-operations)
+12. [Upgrading & rolling back](#upgrading--rolling-back)
+13. [Uninstalling](#uninstalling)
+14. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -45,14 +46,14 @@ The chart targets **standard Kubernetes APIs** (Deployment, Service, Ingress, Se
 | **Azure Kubernetes Service (AKS)** | ✅ Validated | Recommended platform; native integrations for Key Vault, ACR, Workload Identity |
 | **Amazon EKS** | ✅ Compatible | Use ALB ingress + IAM Roles for Service Accounts (IRSA) for secret access |
 | **Google GKE** | ✅ Compatible | Use GCE ingress + Workload Identity for Secret Manager |
-| **Red Hat OpenShift 4.x** | ✅ Compatible | Set `securityContext.runAsNonRoot=true`; use `Route` instead of `Ingress` |
+| **Red Hat OpenShift 4.x** | ✅ Compatible | Pods already run non-root. Under the `restricted-v2` SCC, let OpenShift assign the UID: `--set podSecurityContext.runAsUser=null --set podSecurityContext.runAsGroup=null`. Use a `Route` instead of `Ingress` |
 | **Vanilla Kubernetes / kubeadm** | ✅ Compatible | Bring your own ingress controller and storage class |
 | **k3s / k3d / kind** (dev) | ⚠️ Works | Resource minimums (4c STT, 6c TTS) often exceed laptop capacity |
 
 **Required versions:**
-- Kubernetes ≥ **1.27**
+- Kubernetes ≥ **1.27**; ≥ **1.30** when `preStopSleepSeconds` > 0 (the examples set it), because the chart uses the native `preStop` sleep action
 - Helm ≥ **3.10** (Helm 4.x also tested and supported)
-- An ingress controller **or** Gateway API implementation (chart examples assume `ingress-nginx`; the chart also supports any Gateway API implementation via `gatewayApi.enabled` — see §5)
+- A Gateway API implementation (recommended on AKS: app routing with Gateway API) **or** an ingress controller, if clients outside the cluster call the containers. See [§5](#5-routing-gateway-api-or-ingress)
 
 > 💡 **Why AKS gets special guidance:** This chart originated for Azure customers running disconnected Speech in regulated environments. AKS-specific sections (Key Vault CSI driver, Workload Identity, ACR mirror) are flagged with **AKS** callouts; everything else is platform-neutral.
 
@@ -90,7 +91,7 @@ kubectl port-forward -n speech svc/stt-en-speech-container 5001:5000
 curl http://localhost:5001/ready    # → {"service":"speechtotext","ready":"ready","message":"Api Key is valid, no action needed."}
 ```
 
-For taints, ingress, capacity planning, and language-specific containers, read the rest of this guide.
+The examples create ClusterIP Services only. To reach the containers from outside the cluster, add a routing overlay such as `-f examples/approuting-gateway.yaml` (see [§5](#5-routing-gateway-api-or-ingress)). For taints, routing, capacity planning, and language-specific containers, read the rest of this guide.
 
 ---
 
@@ -105,7 +106,7 @@ For taints, ingress, capacity planning, and language-specific containers, read t
 │  │            │ │=stt-hi     │ │=stt-other  │ │=tts-hi     │ │=tts-other  │  │
 │  │CoreDNS     │ │            │ │en, ta, ... │ │            │ │en, ta, ... │  │
 │  │Ingress /   │ │STT pod(s)  │ │STT pod(s)  │ │TTS pod(s)  │ │TTS pod(s)  │  │
-│  │Gateway     │ │4c / 4Gi    │ │4c / 4Gi    │ │6c / 12Gi   │ │6c / 12Gi   │  │
+│  │Gateway     │ │4c / 8Gi    │ │4c / 8Gi    │ │6c / 12Gi   │ │6c / 12Gi   │  │
 │  │addons      │ │            │ │            │ │            │ │            │  │
 │  └──────┬─────┘ └──────┬─────┘ └──────┬─────┘ └──────┬─────┘ └──────┬─────┘  │
 │         │              │              │              │              │        │
@@ -217,9 +218,13 @@ The chart's example values files (1.3.0+) expect four dedicated node pools: Hind
 
 **How the chart uses them:** each example sets a single value, `nodePool` (for example `nodePool: stt-hi`). The chart turns it into:
 - a **toleration** for `workload=<nodePool>:NoSchedule`, which allows the pod to *land* on the tainted pool
-- a **soft node affinity** (`preferredDuringSchedulingIgnoredDuringExecution`, weight 100), which makes the pod *prefer* that pool but fall back to any untainted node if the pool is down (avoids stuck `Pending`)
+- a **node affinity** for the pool label. By default it's soft (`preferredDuringSchedulingIgnoredDuringExecution`, weight 100): the pod *prefers* that pool but falls back to any untainted node if the pool is full or down. Set `nodePoolAffinity: required` to make it hard: the pod never leaves the pool and stays `Pending` instead.
 
-The hard rejection comes from the **taint** (gate). The soft affinity is a hint (compass).
+The taint keeps other workloads off the speech pools. The affinity decides whether speech pods may leave their pool.
+
+> ⚠️ **Keep speech pods off the system pool.** With soft affinity, a speech pod that doesn't fit its pool can land on any *untainted* node, including system nodes running CoreDNS and the Gateway. For production, either set `nodePoolAffinity: required` (and enable the cluster autoscaler on speech pools so pods don't wait), or taint the system pool `CriticalAddonsOnly=true:NoSchedule`. Before tainting, check that every other workload (including your Gateway or ingress pods) tolerates it or has another pool to run on.
+
+**High availability across nodes.** The chart spreads each release's replicas across nodes by default (`topologySpread`, `kubernetes.io/hostname`, `ScheduleAnyway`). Spreading only helps if the pool has **at least 2 nodes**; with one node, both replicas still share it and a node failure or upgrade takes the language down. For zone resilience set `topologySpread.topologyKey=topology.kubernetes.io/zone` on a zonal pool.
 
 **Fewer pools?** Set `nodePool` per release instead of relying on the examples' values:
 
@@ -278,7 +283,9 @@ If your nodepools use a different taint key or value, override on install (see [
 
 ### 4. Speech credentials secret
 
-The chart expects an opaque Kubernetes Secret with the billing URL + API key, mounted as env vars at runtime (not as plain CLI args, keeping the key out of `kubectl describe pod` output).
+The chart expects an opaque Kubernetes Secret with the billing URL + API key. The pod reads both into environment variables from the Secret, so `kubectl describe pod` shows only the Secret reference, not the values.
+
+> ⚠️ **The API key is still visible inside the pod and on the node.** The container takes its settings as command-line arguments, so the chart passes `Billing=$(BILLING_ENDPOINT)` and `ApiKey=$(BILLING_APIKEY)`, which Kubernetes expands before the process starts. Anyone who can `kubectl exec` into the pod or log in to the node can read the key from the process command line (`/proc/1/cmdline`, `ps`), and runtime audit tools may log it. Restrict `pods/exec` and node access, and rotate the key regularly.
 
 **Quick start — inline values:**
 ```bash
@@ -313,141 +320,190 @@ In all cases, the chart sees a **standard Kubernetes Secret** — the chart does
 <details>
 <summary><b>Azure Key Vault integration via Secrets Store CSI Driver (AKS)</b></summary>
 
-For AKS clusters, Azure Key Vault is the recommended way to store the Speech billing URL and API key. The Secrets Store CSI Driver mounts vault values as a Kubernetes Secret automatically — credentials never live in your Helm values, Git, or CI logs.
+For AKS clusters, Azure Key Vault is the recommended way to store the Speech billing URL and API key. The chart renders a `SecretProviderClass` and mounts it into the pod with the Secrets Store CSI Driver. The driver reads both values from Key Vault and syncs them into the Kubernetes Secret named by `secretRef.name`, which the container reads at startup. Credentials never live in your Helm values, Git, or CI logs.
 
-**One-time AKS + Key Vault setup**
+> ⚠️ **The synced Secret exists only while a pod mounts the volume.** That's why the chart mounts the CSI volume into every speech pod (at `/mnt/secrets-store`, read-only). If you delete all pods, the Secret disappears until the next pod starts.
+
+Two ways for the CSI driver to authenticate to Key Vault:
+
+| `secretProviderClass.identity` | Identity | Setup | Use when |
+|---|---|---|---|
+| `addon` (default) | The AKS add-on's user-assigned managed identity (`azurekeyvaultsecretsprovider-<cluster>`) | One role assignment | Quickest path; every pod that uses a SecretProviderClass on the cluster can use this identity |
+| `workload` | Your own managed identity, federated to the release's ServiceAccount (Microsoft Entra Workload ID) | Identity + federated credential per ServiceAccount | You want Key Vault access limited to the speech pods |
+
+**Option A: add-on identity (default)**
 
 ```bash
-# 1. Enable Secrets Store CSI Driver + Azure provider on AKS (one-time per cluster)
+# 1. Enable the Key Vault provider for Secrets Store CSI Driver (once per cluster)
 az aks enable-addons --addons azure-keyvault-secrets-provider \
   --name <aks-name> --resource-group <rg>
 
-# 2. Enable Workload Identity (replaces deprecated pod-managed identity)
-az aks update --name <aks-name> --resource-group <rg> \
-  --enable-oidc-issuer --enable-workload-identity
-
-# 3. Create the Key Vault and store secrets
+# 2. Create the Key Vault and store both values
 az keyvault create --name <kv-name> --resource-group <rg> --location <region> \
   --enable-rbac-authorization true
-
 az keyvault secret set --vault-name <kv-name> --name speech-billing \
   --value "https://<resource>.cognitiveservices.azure.com/"
-
 az keyvault secret set --vault-name <kv-name> --name speech-apikey \
   --value "<your-speech-key>"
 
-# 4. Create a User-Assigned Managed Identity for the speech workload
+# 3. Let the add-on identity read secrets from the vault
+ADDON_CLIENT_ID=$(az aks show -n <aks-name> -g <rg> \
+  --query addonProfiles.azureKeyvaultSecretsProvider.identity.clientId -o tsv)
+ADDON_OBJECT_ID=$(az aks show -n <aks-name> -g <rg> \
+  --query addonProfiles.azureKeyvaultSecretsProvider.identity.objectId -o tsv)
+az role assignment create \
+  --assignee-object-id "$ADDON_OBJECT_ID" --assignee-principal-type ServicePrincipal \
+  --role "Key Vault Secrets User" \
+  --scope "$(az keyvault show -n <kv-name> -g <rg> --query id -o tsv)"
+TENANT_ID=$(az account show --query tenantId -o tsv)
+
+# 4. Install. Give each release its own synced Secret name (see note below).
+helm upgrade --install stt-en speech-container/speech-container -n speech \
+  -f examples/stt-en.yaml \
+  --set secretRef.enabled=true \
+  --set secretRef.name=stt-en-credentials \
+  --set secretProviderClass.enabled=true \
+  --set secretProviderClass.keyVaultName=<kv-name> \
+  --set secretProviderClass.tenantId="$TENANT_ID" \
+  --set secretProviderClass.clientId="$ADDON_CLIENT_ID"
+```
+
+**Option B: Workload Identity**
+
+```bash
+# 1. Enable the add-on (as above) plus the OIDC issuer and Workload Identity
+az aks update --name <aks-name> --resource-group <rg> \
+  --enable-oidc-issuer --enable-workload-identity
+
+# 2. Create a managed identity and grant it "Key Vault Secrets User" on the vault
 az identity create -g <rg> -n speech-mi
 CLIENT_ID=$(az identity show -g <rg> -n speech-mi --query clientId -o tsv)
 PRINCIPAL_ID=$(az identity show -g <rg> -n speech-mi --query principalId -o tsv)
+az role assignment create --assignee-object-id "$PRINCIPAL_ID" \
+  --assignee-principal-type ServicePrincipal --role "Key Vault Secrets User" \
+  --scope "$(az keyvault show -n <kv-name> -g <rg> --query id -o tsv)"
 
-# 5. Grant the identity Key Vault Secrets User role on the vault
-az role assignment create \
-  --assignee $PRINCIPAL_ID \
-  --role "Key Vault Secrets User" \
-  --scope $(az keyvault show -n <kv-name> -g <rg> --query id -o tsv)
-
-# 6. Federate the identity to the Kubernetes ServiceAccount
+# 3. Federate it to the release's ServiceAccount. The chart names the
+#    ServiceAccount <release>-speech-container (or serviceAccount.name).
 OIDC=$(az aks show -n <aks-name> -g <rg> --query oidcIssuerProfile.issuerUrl -o tsv)
-az identity federated-credential create \
-  --name speech-fed \
-  --identity-name speech-mi \
-  --resource-group <rg> \
-  --issuer "$OIDC" \
-  --subject "system:serviceaccount:speech:speech-sa"
-```
+az identity federated-credential create --name stt-en-fed \
+  --identity-name speech-mi --resource-group <rg> \
+  --issuer "$OIDC" --audience api://AzureADTokenExchange \
+  --subject "system:serviceaccount:speech:stt-en-speech-container"
 
-**Apply the SecretProviderClass**
-
-Create `speech-spc.yaml`:
-```yaml
-apiVersion: secrets-store.csi.x-k8s.io/v1
-kind: SecretProviderClass
-metadata:
-  name: speech-kv
-  namespace: speech
-spec:
-  provider: azure
-  parameters:
-    usePodIdentity: "false"
-    useVMManagedIdentity: "false"
-    clientID: "<CLIENT_ID-from-step-4>"
-    keyvaultName: "<kv-name>"
-    tenantId: "<your-tenant-id>"
-    objects: |
-      array:
-        - |
-          objectName: speech-billing
-          objectType: secret
-        - |
-          objectName: speech-apikey
-          objectType: secret
-  secretObjects:                       # Synthesizes a normal K8s Secret
-    - secretName: speech-credentials
-      type: Opaque
-      data:
-        - objectName: speech-billing
-          key: billing
-        - objectName: speech-apikey
-          key: apikey
-```
-
-Apply it:
-```bash
-kubectl apply -f speech-spc.yaml
-kubectl create serviceaccount speech-sa -n speech \
-  --annotate "azure.workload.identity/client-id=<CLIENT_ID>"
-kubectl label serviceaccount speech-sa -n speech \
-  azure.workload.identity/use=true
-```
-
-**Install the chart with Key Vault binding**
-
-The chart accepts an optional `secretProviderClass.name` and `serviceAccount.name` — when both are set, the rendered Deployment mounts the CSI volume that triggers the secret sync.
-
-```bash
-helm install stt-en speech-container/speech-container -n speech \
+# 4. Install
+helm upgrade --install stt-en speech-container/speech-container -n speech \
   -f examples/stt-en.yaml \
   --set secretRef.enabled=true \
-  --set secretRef.name=speech-credentials \
+  --set secretRef.name=stt-en-credentials \
   --set secretProviderClass.enabled=true \
-  --set secretProviderClass.name=speech-kv \
-  --set serviceAccount.create=false \
-  --set serviceAccount.name=speech-sa
+  --set secretProviderClass.identity=workload \
+  --set secretProviderClass.keyVaultName=<kv-name> \
+  --set secretProviderClass.tenantId="$TENANT_ID" \
+  --set secretProviderClass.clientId="$CLIENT_ID"
 ```
 
-> 💡 **What happens at runtime:** Pod starts → CSI driver authenticates via federated Workload Identity → fetches `speech-billing` and `speech-apikey` from Key Vault → writes them to a tmpfs volume → Kubernetes synthesizes the `speech-credentials` Secret → chart's env vars (`Billing`, `ApiKey`) resolve from that Secret. If Key Vault rotates the value, restarting the pod picks up the new value automatically.
+With `identity=workload` the chart adds the `azure.workload.identity/client-id` annotation to the ServiceAccount it creates and the `azure.workload.identity/use: "true"` label to the pod. Using your own ServiceAccount (`serviceAccount.create=false`, `serviceAccount.name=...`)? Annotate it yourself and federate that name instead.
 
-> ⚠️ Workload Identity requires AKS ≥ 1.27. For older clusters, fall back to AAD Pod Identity (deprecated) or use a plain Secret (instructions above).
+**Key Vault values**
+
+| Key | Default | Notes |
+|---|---|---|
+| `secretProviderClass.enabled` | `false` | Mount the CSI volume. Requires `secretRef.enabled=true` |
+| `secretProviderClass.create` | `true` | Render a SecretProviderClass in this release. Set `false` to use one you manage |
+| `secretProviderClass.name` | `""` | Name of the SecretProviderClass. Default `<release>-speech-container`; required when `create=false` |
+| `secretProviderClass.keyVaultName` | `""` | Key Vault name (required when `create=true`) |
+| `secretProviderClass.tenantId` | `""` | Microsoft Entra tenant ID of the vault (required when `create=true`) |
+| `secretProviderClass.identity` | `addon` | `addon` or `workload` |
+| `secretProviderClass.clientId` | `""` | Client ID of the add-on identity (`addon`) or your managed identity (`workload`) |
+| `secretProviderClass.billingSecretName` | `speech-billing` | Key Vault secret holding the billing URL; synced to `secretRef.billingKey` |
+| `secretProviderClass.apiKeySecretName` | `speech-apikey` | Key Vault secret holding the API key; synced to `secretRef.apiKeyKey` |
+| `secretProviderClass.mountPath` | `/mnt/secrets-store` | Where the CSI volume is mounted (read-only) |
+
+> 💡 **One synced Secret per release.** Each release with `create=true` renders its own SecretProviderClass. If several of them sync the *same* Secret name, they all write to one object and uninstalling one release can affect the others. Give each release its own `secretRef.name` (as above), or apply one shared SecretProviderClass yourself and install every release with `secretProviderClass.create=false` and `secretProviderClass.name=<shared-name>`.
+
+> 💡 **Rotation:** the container reads the billing URL and key only at startup. After rotating them in Key Vault, restart the pods (`kubectl rollout restart deployment -n speech <release>-speech-container`).
 
 </details>
 
-### 5. Ingress controller
+### 5. Routing: Gateway API or Ingress
 
-The chart ships an NGINX Ingress example out of the box. The chart also exposes a `gatewayApi.enabled` flag for clusters running a Gateway API implementation (Envoy Gateway, Cilium, Contour, AGC, etc.) — see `values.yaml` for the schema; routing-layer setup for those controllers is out of scope for this README. Pick **one** per release: `ingress.enabled=true` **or** `gatewayApi.enabled=true`. The chart fails fast at template time if you accidentally enable both.
+The examples create a ClusterIP Service per release and leave external routing **off**. Add one overlay per release to expose it on a shared hostname, with one path per language (`/stt/<locale>`, `/tts/<locale>`):
 
----
+| Route | Overlay | Notes |
+|---|---|---|
+| **AKS app routing with Gateway API** (recommended on AKS) | `examples/approuting-gateway.yaml` | Managed Istio-based Gateway (`gatewayClassName: approuting-istio`). TLS terminates at the Gateway listener |
+| **Application Gateway for Containers** | `examples/agc-overrides.yaml` | Azure-managed L7 load balancer, WAF option |
+| **NGINX Ingress** | `--set ingress.enabled=true` | Only if you already run an NGINX controller. Upstream ingress-nginx maintenance ended in March 2026; AKS supports its app routing NGINX with critical security patches through November 2026. Prefer Gateway API for new clusters |
+| **LoadBalancer per release** | `examples/internal-lb.yaml` or `--set service.type=LoadBalancer` | One IP per language, no path routing |
 
-#### NGINX Ingress setup
+Use **one** of `ingress.enabled` and `gatewayApi.enabled` per release. The chart fails at template time if both are on.
 
-Install `ingress-nginx` once per cluster before installing the speech chart:
+<a id="routing-with-aks-app-routing-gateway-api"></a>
+#### Routing with AKS app routing (Gateway API)
+
+One-time cluster setup:
 
 ```bash
-helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
-helm install ingress-nginx ingress-nginx/ingress-nginx \
-  -n ingress-nginx --create-namespace \
-  --set controller.service.type=LoadBalancer
+# 1. Enable Gateway API and the app routing Istio implementation
+az aks update --resource-group <rg> --name <aks-name> \
+  --enable-gateway-api --enable-app-routing-istio
+
+# 2. TLS certificate for the hostname, in the Gateway namespace
+kubectl create secret tls speech-tls -n speech --cert=speech.crt --key=speech.key
 ```
 
-After install, capture the external IP and point your DNS (or `/etc/hosts` for testing) at it:
+```yaml
+# 3. One shared Gateway for every speech release (gateway.yaml)
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: speech-gateway
+  namespace: speech
+spec:
+  gatewayClassName: approuting-istio
+  # Private IP instead of a public one:
+  # infrastructure:
+  #   annotations:
+  #     service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+  listeners:
+    - name: https
+      hostname: speech.contoso.com
+      port: 443
+      protocol: HTTPS
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: speech-tls
+      allowedRoutes:
+        namespaces:
+          from: Same
+```
+
 ```bash
-kubectl get svc -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+kubectl apply -f gateway.yaml
+kubectl get gateway speech-gateway -n speech      # PROGRAMMED=True, ADDRESS=<IP>
 ```
 
-The `examples/stt-*.yaml` and `examples/tts-*.yaml` files default to `ingress.enabled=true`. No further configuration needed.
+Install each release with the overlay. The example sets the path; you set the hostname:
 
+```bash
+for rel in stt-en stt-hi tts-en tts-hi; do
+  helm upgrade --install $rel speech-container/speech-container -n speech \
+    --version 1.4.0 \
+    -f examples/$rel.yaml \
+    -f examples/approuting-gateway.yaml \
+    --set secretRef.enabled=true \
+    --set gatewayApi.hostname=speech.contoso.com
+done
+kubectl get httproute -n speech
+```
 
----
+Each HTTPRoute matches the hostname and the language path, strips the path prefix before forwarding (`URLRewrite`, `ReplacePrefixMatch: /`), and allows 3600 s per request for long STT WebSocket sessions.
+
+- **Hostnames:** requests with any other `Host` header get 404. To accept more names (for example a private DNS name next to the public one), add them under `gatewayApi.hostnames`; every name must also be accepted by the Gateway listener (use a listener per name, a wildcard listener, or omit the listener `hostname`).
+- **Client URLs:** with path routing, pass the full URL to the Speech SDK `endpoint` parameter. The SDK `host` parameter doesn't accept a path. See [Calling the containers](#calling-the-containers).
 
 ## Installing the chart
 
@@ -469,22 +525,24 @@ helm install stt-en speech-container/speech-container \
 To grab the example value files without cloning the repo:
 ```bash
 helm pull speech-container/speech-container --untar
-ls speech-container/examples/   # stt-en.yaml, stt-hi.yaml, stt-ta.yaml, tts-en.yaml, tts-hi.yaml, tts-ta.yaml, prod-overrides.yaml, agc-overrides.yaml, internal-lb.yaml
+ls speech-container/examples/   # stt-en.yaml, stt-hi.yaml, stt-ta.yaml, tts-en.yaml, tts-hi.yaml, tts-ta.yaml, approuting-gateway.yaml, agc-overrides.yaml, internal-lb.yaml, prod-overrides.yaml
 ```
 
 ---
 
 ## Configurable values reference
 
-All values configurable via `--set`, `--set-json`, or `-f values.yaml`.
+All values configurable via `--set`, `--set-json`, or `-f values.yaml`. The chart ships a `values.schema.json`: misspelled or unknown keys, and invalid choices such as `mode: asr`, fail at install time instead of being silently ignored.
 
 ### Image
 | Key | Default | Notes |
 |---|---|---|
-| `image.repository` | *(set per mode in examples)* | `mcr.microsoft.com/azure-cognitive-services/speechservices/speech-to-text` or `…/neural-text-to-speech` |
-| `image.tag` | `5.3.0-amd64-en-us` (STT) / `4.7.0-amd64-en-us-avaneural` (TTS) | Locale-specific image tag |
+| `image.registry` | `mcr.microsoft.com` | Point at your ACR mirror if you mirror images |
+| `image.repository` | `""` | Empty = derived from `mode` (`…/speech-to-text` or `…/neural-text-to-speech`) |
+| `image.tag` | `5.4.0-amd64-en-us` | Locale (STT) or voice (TTS) specific; examples pin 5.4.0 STT (ta-IN 5.3.0) and 4.9.0 TTS |
 | `image.pullPolicy` | `IfNotPresent` | |
-| `imagePullSecrets` | `[]` | If using a private ACR mirror |
+| `image.pullSecrets` | `[]` | Pull secrets for a private registry, e.g. `[{name: acr-pull}]` |
+| `imagePullSecrets` | `[]` | Same as `image.pullSecrets` (standard Helm key); both lists are merged |
 
 ### Container args + credentials
 | Key | Default | Notes |
@@ -496,28 +554,55 @@ All values configurable via `--set`, `--set-json`, or `-f values.yaml`.
 | `secretRef.name` | `speech-credentials` | Name of the Secret |
 | `secretRef.billingKey` | `billing` | Key inside the Secret for billing URL |
 | `secretRef.apiKeyKey` | `apikey` | Key inside the Secret for API key |
+| `secretProviderClass.*` | disabled | Sync the Secret from Azure Key Vault; see [Key Vault integration](#azure-key-vault-integration-aks) |
 
 ### Resources (the most important knobs)
 | Key | Chart default | STT example | TTS example |
 |---|---|---|---|
 | `resources.requests.cpu` | `8` | **`4`** | **`6`** |
-| `resources.requests.memory` | `8Gi` | **`4Gi`** | **`12Gi`** |
-| `resources.limits.cpu` | `8` | inherited (8) | inherited (8) |
-| `resources.limits.memory` | `16Gi` | inherited (16Gi) | inherited (16Gi) |
+| `resources.requests.memory` | `8Gi` | **`8Gi`** | **`12Gi`** |
+| `resources.limits.cpu` | `8` | **`8`** | inherited (8) |
+| `resources.limits.memory` | `16Gi` | **`16Gi`** | inherited (16Gi); use `24Gi` for multilingual voices |
 
-Concurrency cap (passed as `DECODER_MAX_COUNT` env var):
-| Key | Chart default | STT example | TTS example |
-|---|---|---|---|
-| `concurrency.numberOfConcurrentRequest` | `8` | `8` | `5` |
+STT concurrency (passed as the `DECODER_MAX_COUNT` env var, **STT only**):
+| Key | Chart default | STT examples |
+|---|---|---|
+| `concurrency.numberOfConcurrentRequest` | `8` | `5` (hi-IN, 4-core request) / `8` (en-US, ta-IN) |
+
+TTS has no server-side concurrency setting, so the chart doesn't set `DECODER_MAX_COUNT` on TTS pods. Microsoft recommends fewer than 5 concurrent requests per 8-core TTS container: cap concurrency at the gateway or in the client and size replicas for the peak.
 
 ### Scheduling
 | Key | Default | Notes |
 |---|---|---|
-| `nodePool` | `""` | Target pool: adds toleration `<nodePoolKey>=<nodePool>:NoSchedule` + soft affinity for label `<nodePoolKey>=<nodePool>`. Examples set `stt-hi` / `stt-other` / `tts-hi` / `tts-other`. Empty = any node |
+| `nodePool` | `""` | Target pool: adds toleration `<nodePoolKey>=<nodePool>:NoSchedule` + node affinity for label `<nodePoolKey>=<nodePool>`. Examples set `stt-hi` / `stt-other` / `tts-hi` / `tts-other`. Empty = any node |
 | `nodePoolKey` | `workload` | Taint/label key used by `nodePool` |
+| `nodePoolAffinity` | `preferred` | `preferred` (fall back to other untainted nodes) or `required` (never leave the pool) |
+| `topologySpread.enabled` | `true` | Spread replicas of a release across `topologySpread.topologyKey` |
+| `topologySpread.topologyKey` | `kubernetes.io/hostname` | Use `topology.kubernetes.io/zone` to spread across zones |
+| `topologySpread.maxSkew` | `1` | |
+| `topologySpread.whenUnsatisfiable` | `ScheduleAnyway` | `DoNotSchedule` makes the spread mandatory |
+| `topologySpreadConstraints` | `[]` | Extra constraints, added to the generated one |
 | `tolerations` | `[]` | Extra tolerations, **added** to the `nodePool` toleration |
-| `affinity` | `{}` | When non-empty, **replaces** the soft affinity generated from `nodePool` |
+| `affinity` | `{}` | When non-empty, **replaces** the affinity generated from `nodePool` |
 | `nodeSelector` | `{}` | Hard pin to a node (avoid in prod) |
+| `priorityClassName` | `""` | |
+
+### Rollout, shutdown and disruption
+| Key | Chart default | Examples | Notes |
+|---|---|---|---|
+| `strategy` | `RollingUpdate`, `maxSurge: 1`, `maxUnavailable: 0` | `maxSurge: 0`, `maxUnavailable: 1` | The default needs room for one extra pod. On a full dedicated pool the surge pod stays `Pending` and the rollout never finishes; the examples replace one pod at a time instead |
+| `terminationGracePeriodSeconds` | `30` | STT `330` / TTS `45` | Maximum time Kubernetes waits before killing the container |
+| `preStopSleepSeconds` | `0` | STT `300` / TTS `15` | Keeps a terminating pod serving its open sessions (it no longer receives new ones). Must be less than `terminationGracePeriodSeconds`; needs Kubernetes 1.30+ |
+| `podDisruptionBudget.enabled` | `true` | `true` | Created only when the release keeps ≥ 2 replicas (`autoscaling.minReplicas`, or `replicaCount` without HPA) |
+| `podDisruptionBudget.minAvailable` | `1` | `1` | |
+
+### Probes
+| Key | Default | Notes |
+|---|---|---|
+| `startupProbe.enabled` | `true` | `GET /ready` every 10 s, up to 60 failures (10 min) for model load. Liveness and readiness don't run until it passes |
+| `readinessProbe.path` | `/ready` | Removes the pod from the Service until the model is loaded |
+| `livenessProbe.type` | `tcpSocket` | Restarts the container only if port 5000 stops accepting connections. `httpGet` probes `livenessProbe.path` (`/status`, which reports API key validation) instead |
+| `*.initialDelaySeconds` | `0` | The startup probe covers model load. If you disable it, set `initialDelaySeconds` (for example 120) on liveness and readiness |
 
 ### Service & Ingress
 | Key | Default | Notes |
@@ -525,27 +610,47 @@ Concurrency cap (passed as `DECODER_MAX_COUNT` env var):
 | `service.type` | `ClusterIP` | Use `LoadBalancer` to expose directly |
 | `service.port` | `5000` | Speech container HTTP port |
 | `service.targetPort` | `5000` | |
-| `ingress.enabled` | `false` (chart) / `true` (examples) | Per-release Ingress |
+| `service.annotations` | `{}` | For example the internal load balancer annotation |
+| `ingress.enabled` | `false` (chart and examples) | Per-release NGINX Ingress |
 | `ingress.className` | `nginx` | |
-| `ingress.host` | *(unset)* | Set in examples to `speech.example.com` |
-| `ingress.path` | *(unset)* | E.g. `/stt/en-US`, `/tts/hi-IN` |
+| `ingress.host` | `speech.bfl.internal` (chart) / `speech.example.com` (examples) | |
+| `ingress.path` | `""` | Set in examples, e.g. `/stt/en-US`, `/tts/hi-IN` |
 | `ingress.tls.enabled` | `false` | Set `true` + `secretName` for TLS |
+
+### Gateway API (HTTPRoute)
+| Key | Default | Notes |
+|---|---|---|
+| `gatewayApi.enabled` | `false` | Render an HTTPRoute. Turned on by `approuting-gateway.yaml` / `agc-overrides.yaml` |
+| `gatewayApi.parentRef.name` / `.namespace` / `.sectionName` | `""` | The Gateway (and listener) to attach to |
+| `gatewayApi.hostname` | `""` | Hostname to match; must be accepted by the Gateway listener |
+| `gatewayApi.hostnames` | `[]` | Extra hostnames, added to `gatewayApi.hostname` |
+| `gatewayApi.path` | `""` | Path prefix, set in examples (`/stt/<locale>`, `/tts/<locale>`); stripped before forwarding |
+| `gatewayApi.timeouts.request` / `.backendRequest` | `3600s` | Long STT WebSocket sessions |
 
 ### Autoscaling (HPA)
 | Key | Default | Notes |
 |---|---|---|
 | `autoscaling.enabled` | `true` | |
-| `autoscaling.minReplicas` | `1` | |
-| `autoscaling.maxReplicas` | `5` (chart) / `4` (examples) | |
-| `autoscaling.targetCPUUtilizationPercentage` | `75` | |
+| `autoscaling.minReplicas` | `2` | |
+| `autoscaling.maxReplicas` | `6` | Keep within what the pool can schedule (max nodes × pods per node). Higher values only create `Pending` pods |
+| `autoscaling.targetCPUUtilizationPercentage` | `75` | CPU is a proxy for STT session load; see [Production operations](#production-operations) |
+
+### Security
+| Key | Default | Notes |
+|---|---|---|
+| `podSecurityContext` | `runAsNonRoot: true`, `runAsUser: 65532`, `runAsGroup: 65532`, `seccompProfile: RuntimeDefault` | The STT and TTS images run as the built-in `nonroot` user (UID/GID 65532) |
+| `containerSecurityContext` | `allowPrivilegeEscalation: false`, `capabilities.drop: [ALL]`, `readOnlyRootFilesystem: false` | |
+| `serviceAccount.create` | `true` | |
+| `serviceAccount.automountServiceAccountToken` | `false` | Speech pods don't call the Kubernetes API, so no token is mounted |
 
 ### Misc
 | Key | Default | Notes |
 |---|---|---|
-| `replicaCount` | `1` | Ignored if HPA enabled |
+| `replicaCount` | `2` | Ignored if HPA enabled |
 | `env.extra` | `[]` | Inject extra env vars |
 | `podLabels` | `{}` | Additional pod labels |
 | `podAnnotations` | `{}` | Additional pod annotations |
+| `nameOverride` / `fullnameOverride` | `""` | |
 
 ---
 
@@ -558,7 +663,7 @@ helm install stt-en speech-container/speech-container \
   -f examples/stt-en.yaml \
   --set secretRef.enabled=true
 ```
-**Result**: 4c/4Gi STT pod on the non-Hindi STT pool (`workload=stt-other`), ingress at `speech.example.com/stt/en-US`.
+**Result**: two 4c/8Gi STT pods (16Gi limit) on the non-Hindi STT pool (`workload=stt-other`), spread across nodes, ClusterIP Service `stt-en-speech-container`. Add `-f examples/approuting-gateway.yaml` to publish it at `https://<hostname>/stt/en-US`.
 
 ### Example 2 — Quickstart TTS (Hindi)
 ```bash
@@ -567,7 +672,7 @@ helm install tts-hi speech-container/speech-container \
   -f examples/tts-hi.yaml \
   --set secretRef.enabled=true
 ```
-**Result**: 6c/12Gi TTS pod on the Hindi TTS pool (`workload=tts-hi`), ingress at `speech.example.com/tts/hi-IN`.
+**Result**: two 6c/12Gi TTS pods on the Hindi TTS pool (`workload=tts-hi`). Add `-f examples/approuting-gateway.yaml` to publish it at `https://<hostname>/tts/hi-IN`.
 
 ### Example 3 — Override resources at install time
 ```bash
@@ -594,7 +699,7 @@ helm install stt-en speech-container/speech-container -n speech \
 
 End-to-end production install for a Hindi (hi-IN) STT release:
 - Credentials pulled from a Secret named `bfl-speech-creds` with non-default keys (`BILLING_URL` / `COG_KEY`)
-- Per-pod CPU/memory tuned tighter than chart defaults (Microsoft Learn min for STT: 4 CPU / 4 GB; here we use 6/8 with burst to 14 GB for the model load)
+- Per-pod CPU/memory tuned (Microsoft Learn: STT needs 4 GB plus 4-8 GB for the speech model; here we request 6 CPU / 8 GB with a 14 GB limit)
 - Service kept as ClusterIP for in-cluster apps; flip to `service.type=LoadBalancer` if a public IP is needed
 
 **Pre-req:** create the Secret once:
@@ -607,7 +712,7 @@ kubectl create secret generic bfl-speech-creds -n speech \
 **Install:**
 ```bash
 helm install stt-hi speech-container/speech-container -n speech \
-  --version 1.2.7 \
+  --version 1.4.0 \
   --set mode=stt \
   --set image.tag=5.4.0-amd64-hi-in \
   --set secretRef.enabled=true \
@@ -625,13 +730,13 @@ helm install stt-hi speech-container/speech-container -n speech \
 
 ### Example 4b — Hindi TTS (Neural voice) with custom Secret reference + custom CPU/memory
 
-Same Secret as 4a (or a different one). Neural TTS needs more RAM than STT — Microsoft Learn recommends 8 CPU / 16 GB; this example sets requests at 8/12 with limits at 8/16:
+Same Secret as 4a (or a different one). Neural TTS needs more RAM than STT (Microsoft Learn: 6 CPU / 12 GB minimum, 8 CPU / 16 GB recommended); this example sets requests at 8/12 with limits at 8/16. TTS has no `concurrency` setting: limit concurrent requests per pod in the client or gateway.
 
 ```bash
 helm install tts-hi speech-container/speech-container -n speech \
-  --version 1.2.7 \
+  --version 1.4.0 \
   --set mode=tts \
-  --set image.tag=4.7.0-amd64-hi-in-swaraneural \
+  --set image.tag=4.9.0-amd64-hi-in-swaraneural \
   --set secretRef.enabled=true \
   --set secretRef.name=bfl-speech-creds \
   --set secretRef.billingKey=BILLING_URL \
@@ -640,12 +745,11 @@ helm install tts-hi speech-container/speech-container -n speech \
   --set resources.requests.memory=12Gi \
   --set resources.limits.cpu=8 \
   --set resources.limits.memory=16Gi \
-  --set concurrency.numberOfConcurrentRequest=5 \
   --set service.type=ClusterIP \
   --set ingress.enabled=false
 ```
 
-> **Other Hindi TTS voices on tag 4.7.0** (swap the suffix): `hi-in-madhurneural`, `hi-in-rehaanneural`, `hi-in-aaravneural`, `hi-in-ananyaneural`, `hi-in-kavyaneural`, `hi-in-kunalneural`, `hi-in-arjunneural`.
+> **Other Hindi TTS voices** (swap the suffix; check the tag exists with the [tag lookup helper](#tag-lookup-helper-before-installing-a-new-locale)): `hi-in-madhurneural`, `hi-in-rehaanneural`, `hi-in-aaravneural`, `hi-in-ananyaneural`, `hi-in-kavyaneural`, `hi-in-kunalneural`, `hi-in-arjunneural`.
 
 **Verify both come up Running:**
 ```bash
@@ -688,7 +792,7 @@ helm install stt-en speech-container/speech-container -n speech \
   --set nodePoolKey=dedicated \
   --set nodePool=speech-prod
 ```
-The chart generates the matching toleration and soft affinity. Need different placement logic (for example a hard `requiredDuringScheduling…` rule)? Set `affinity` directly; a non-empty `affinity` replaces the generated one, while the `nodePool` toleration is kept.
+The chart generates the matching toleration and node affinity. Add `--set nodePoolAffinity=required` to keep the pods on that pool. Need different placement logic? Set `affinity` directly; a non-empty `affinity` replaces the generated one, while the `nodePool` toleration is kept.
 
 ### Example 7 — Disable HPA, fix replica count
 ```bash
@@ -699,13 +803,12 @@ helm install stt-en speech-container/speech-container -n speech \
   --set replicaCount=3
 ```
 
-### Example 8 — Expose via LoadBalancer (skip ingress)
+### Example 8 — Expose via LoadBalancer (no Gateway or Ingress)
 ```bash
 helm install stt-en speech-container/speech-container -n speech \
   -f examples/stt-en.yaml \
   --set secretRef.enabled=true \
-  --set service.type=LoadBalancer \
-  --set ingress.enabled=false
+  --set service.type=LoadBalancer
 ```
 
 ### Example 8a — Expose via INTERNAL LoadBalancer (private IP, VNet-routable only)
@@ -736,23 +839,27 @@ curl http://10.224.0.45:5000/ready
 
 > **Why not just use `--set service.annotations.service\.beta\.kubernetes\.io/azure-load-balancer-internal=true`?** Because `--set` parses unquoted `true` as a boolean and Kubernetes annotations require strings, so you hit `cannot unmarshal bool into … type string`. The overlay file pins the value as the string `"true"` and is the simplest path. (If you must use a flag, switch to `--set-string`.)
 
-### Example 9 — TLS-enabled ingress with cert-manager
+### Example 9 — TLS-enabled NGINX ingress with cert-manager
+For clusters that already run an NGINX ingress controller (see [§5](#5-routing-gateway-api-or-ingress)):
 ```bash
 helm install tts-en speech-container/speech-container -n speech \
   -f examples/tts-en.yaml \
   --set secretRef.enabled=true \
+  --set ingress.enabled=true \
   --set ingress.tls.enabled=true \
   --set ingress.tls.secretName=tts-tls \
   --set ingress.host=speech.example.com \
   --set 'ingress.annotations.cert-manager\.io/cluster-issuer=letsencrypt-prod'
 ```
 
-### Example 10 — Install all 4 (STT en/hi + TTS en/hi)
+### Example 10 — Install all 4 (STT en/hi + TTS en/hi) behind AKS app routing
 ```bash
 for rel in stt-en stt-hi tts-en tts-hi; do
-  helm install $rel speech-container/speech-container -n speech \
+  helm upgrade --install $rel speech-container/speech-container -n speech \
     -f examples/$rel.yaml \
-    --set secretRef.enabled=true
+    -f examples/approuting-gateway.yaml \
+    --set secretRef.enabled=true \
+    --set gatewayApi.hostname=speech.contoso.com
 done
 ```
 
@@ -780,16 +887,16 @@ Browse available image tags and the official catalog of supported locales/voices
 
 | Workload | Repository | Tag pattern |
 |---|---|---|
-| **STT** | `mcr.microsoft.com/azure-cognitive-services/speechservices/speech-to-text` | `<version>-amd64-<locale>` (e.g. `5.3.0-amd64-ta-in`) |
-| **TTS** | `mcr.microsoft.com/azure-cognitive-services/speechservices/neural-text-to-speech` | `<version>-amd64-<locale>-<voice>neural` (e.g. `4.7.0-amd64-ta-in-pallavineural`) |
+| **STT** | `mcr.microsoft.com/azure-cognitive-services/speechservices/speech-to-text` | `<version>-amd64-<locale>` (e.g. `5.4.0-amd64-hi-in`, `5.3.0-amd64-ta-in`) |
+| **TTS** | `mcr.microsoft.com/azure-cognitive-services/speechservices/neural-text-to-speech` | `<version>-amd64-<locale>-<voice>neural` (e.g. `4.9.0-amd64-ta-in-pallavineural`) |
 
 Locale codes follow BCP-47: `en-US`, `hi-IN`, `ta-IN`, `te-IN`, `mr-IN`, `bn-IN`, `gu-IN`, `kn-IN`, `ml-IN`, `pa-IN`, `ur-IN`, etc.
 
 > 💡 **Tip:** Open the MCR tags page for STT or TTS above to see every locale + version Microsoft has published. The TTS voice gallery lets you hear samples before picking a `<voice>neural` to deploy.
 
-> ⚠️ **TTS version stream — read this before adding any non-English/Hindi locale.** Microsoft publishes TTS images on **two parallel streams**: `4.6.0` (legacy — only some en-US and hi-IN voices) and `4.7.0` (current — all en-US, hi-IN, plus every Indic locale: `ta`, `mr`, `te`, `bn`, `gu`, `kn`, `ml`, `pa`, `ur`, …). **There is no `4.6.0` tag for ta-IN, mr-IN, te-IN, bn-IN, gu-IN, kn-IN, ml-IN, pa-IN, or ur-IN.** Always default to **`4.7.0`** for TTS unless you have a specific reason to pin an older en-US/hi-IN voice. Following an old `4.6.0` pattern for a new locale will cause `ImagePullBackOff`.
+> ⚠️ **TTS versions — check before adding a locale.** The examples pin TTS **4.9.0** (en-US AvaNeural, hi-IN SwaraNeural, ta-IN PallaviNeural, all verified on MCR). Older lines (4.6.0, 4.7.0) don't cover every voice; for example there is no 4.6.0 tag for most Indic locales. Run the [tag lookup helper](#tag-lookup-helper-before-installing-a-new-locale) for your voice before installing, or you'll hit `ImagePullBackOff`.
 
-> ⚠️ **STT version is per-locale — DO NOT assume one version covers all languages.** Unlike TTS (where 4.7.0 is universal), STT versions are **not synchronized across locales**. As of this writing:
+> ⚠️ **STT version is per-locale — DO NOT assume one version covers all languages.** STT versions are **not synchronized across locales**. As of this writing:
 >
 > | STT version | Locales currently on this version |
 > |---|---|
@@ -826,7 +933,7 @@ helm install stt-ta speech-container/speech-container -n speech \
   -f examples/stt-ta.yaml \
   --set secretRef.enabled=true
 ```
-**Result**: Tamil STT pod on the non-Hindi STT pool (`workload=stt-other`), ingress at `speech.example.com/stt/ta-IN`. Repository is auto-derived from `mode: stt` (no need to pass `image.repository`).
+**Result**: Tamil STT pods (5.3.0; no 5.4.0 ta-IN image yet) on the non-Hindi STT pool (`workload=stt-other`), path `/stt/ta-IN` once you add a routing overlay. Repository is auto-derived from `mode: stt` (no need to pass `image.repository`).
 
 Alternatively, override the tag on top of the English values:
 ```bash
@@ -834,7 +941,7 @@ helm install stt-ta speech-container/speech-container -n speech \
   -f examples/stt-en.yaml \
   --set secretRef.enabled=true \
   --set image.tag=5.3.0-amd64-ta-in \
-  --set ingress.path=/stt/ta-IN
+  --set gatewayApi.path=/stt/ta-IN
 ```
 
 ### Example 12 — Tamil TTS (Pallavi neural voice)
@@ -844,15 +951,15 @@ helm install tts-ta speech-container/speech-container -n speech \
   -f examples/tts-ta.yaml \
   --set secretRef.enabled=true
 ```
-**Result**: Tamil TTS pod on the non-Hindi TTS pool (`workload=tts-other`), ingress at `speech.example.com/tts/ta-IN`. Repository auto-derived from `mode: tts`.
+**Result**: Tamil TTS pods on the non-Hindi TTS pool (`workload=tts-other`), path `/tts/ta-IN` once you add a routing overlay. Repository auto-derived from `mode: tts`.
 
 Alternatively, override the tag on top of the English values:
 ```bash
 helm install tts-ta speech-container/speech-container -n speech \
   -f examples/tts-en.yaml \
   --set secretRef.enabled=true \
-  --set image.tag=4.7.0-amd64-ta-in-pallavineural \
-  --set ingress.path=/tts/ta-IN
+  --set image.tag=4.9.0-amd64-ta-in-pallavineural \
+  --set gatewayApi.path=/tts/ta-IN
 ```
 
 ### Example 13 — Generic "add any language" pattern
@@ -863,20 +970,20 @@ helm install <RELEASE> speech-container/speech-container -n speech \
   -f examples/stt-en.yaml \
   --set secretRef.enabled=true \
   --set image.tag=<VERSION>-amd64-<LOCALE> \
-  --set ingress.path=/stt/<LOCALE>
+  --set gatewayApi.path=/stt/<LOCALE>
 
 # TTS - any neural voice
 helm install <RELEASE> speech-container/speech-container -n speech \
   -f examples/tts-en.yaml \
   --set secretRef.enabled=true \
   --set image.tag=<VERSION>-amd64-<LOCALE>-<VOICE>neural \
-  --set ingress.path=/tts/<LOCALE>
+  --set gatewayApi.path=/tts/<LOCALE>
 ```
-These reuse the English examples, so the pods land on the non-Hindi `stt-other` / `tts-other` pools. For Hindi, start from `stt-hi.yaml` / `tts-hi.yaml`, or add `--set nodePool=stt-hi` / `--set nodePool=tts-hi`.
+Add `-f examples/approuting-gateway.yaml --set gatewayApi.hostname=<hostname>` (or another routing option) to publish the path. Using NGINX Ingress instead? Set `ingress.path` too. These reuse the English examples, so the pods land on the non-Hindi `stt-other` / `tts-other` pools. For Hindi, start from `stt-hi.yaml` / `tts-hi.yaml`, or add `--set nodePool=stt-hi` / `--set nodePool=tts-hi`.
 
 ### Example 14 — Bulk install many languages
 ```bash
-# STT — verified tags as of chart 1.1.9. Always re-check with the Tag lookup
+# STT — verified tags as of chart 1.4.0. Always re-check with the Tag lookup
 # helper above before running; STT versions are NOT synchronized across locales.
 declare -A STT_LANGS=(
   [en]="5.4.0-amd64-en-us"
@@ -894,16 +1001,16 @@ for lang in "${!STT_LANGS[@]}"; do
     --set secretRef.enabled=true \
     --set image.tag=${STT_LANGS[$lang]} \
     --set nodePool=$pool \
-    --set ingress.path=/stt/$lang
+    --set gatewayApi.path=/stt/$lang
 done
 
-# TTS — 4.7.0 is the universal current line for every locale Microsoft publishes
+# TTS — en/hi/ta/mr verified on 4.9.0; check te/bn with the tag lookup helper
 declare -A TTS_LANGS=(
-  [en]="4.7.0-amd64-en-us-avaneural"
-  [hi]="4.7.0-amd64-hi-in-swaraneural"
-  [ta]="4.7.0-amd64-ta-in-pallavineural"
+  [en]="4.9.0-amd64-en-us-avaneural"
+  [hi]="4.9.0-amd64-hi-in-swaraneural"
+  [ta]="4.9.0-amd64-ta-in-pallavineural"
+  [mr]="4.9.0-amd64-mr-in-aarohineural"
   [te]="4.7.0-amd64-te-in-shrutineural"
-  [mr]="4.7.0-amd64-mr-in-aarohineural"
   [bn]="4.7.0-amd64-bn-in-tanishaaneural"
 )
 
@@ -914,13 +1021,14 @@ for lang in "${!TTS_LANGS[@]}"; do
     --set secretRef.enabled=true \
     --set image.tag=${TTS_LANGS[$lang]} \
     --set nodePool=$pool \
-    --set ingress.path=/tts/$lang
+    --set gatewayApi.path=/tts/$lang
 done
 ```
+Add `-f examples/approuting-gateway.yaml --set gatewayApi.hostname=<hostname>` to each command to publish the paths.
 
 > ⚠️ **Verify each tag exists on MCR before installing.** Use the [tag lookup helper](#tag-lookup-helper-before-installing-a-new-locale) snippet above — it's faster and more reliable than `docker pull`, and it catches typos before you hit `ImagePullBackOff`.
 
-> 📦 **Capacity reminder for multi-language deployments.** Each language = one extra pod on its pool. Every non-Hindi language shares the `stt-other` / `tts-other` pool, so that pool grows with the number of languages. With chart defaults (6 CPU / 12 GiB TTS request) and a 16-core memory-optimized node, **only 2 TTS pods fit per node**. Planning for 4 non-Hindi TTS languages? Provision **at least 2 nodes in the `tts-other` pool before installing**, otherwise the 3rd/4th pod will sit in `Pending` with `FailedScheduling: Insufficient cpu` (the `workload=tts-other:NoSchedule` taint keeps other pools' nodes for their own workloads). Rule of thumb: **`ceil(TTS pods on the pool / 2)` nodes per TTS pool**, same math for STT.
+> 📦 **Capacity reminder for multi-language deployments.** Each language = one extra pod on its pool. Every non-Hindi language shares the `stt-other` / `tts-other` pool, so that pool grows with the number of languages. With chart defaults (6 CPU / 12 GiB TTS request) and a 16-core memory-optimized node, **only 2 TTS pods fit per node**, and every example runs **2 replicas** per language. Planning for 4 non-Hindi TTS languages (8 pods)? Provision **at least 4 nodes in the `tts-other` pool before installing** (or enable the cluster autoscaler), otherwise the extra pods sit in `Pending` with `FailedScheduling: Insufficient cpu` (the `workload=tts-other:NoSchedule` taint keeps other pools' nodes for their own workloads). Rule of thumb: **`ceil(TTS pods on the pool / 2)` nodes per TTS pool**, same math for STT. Each image also needs node disk (STT en-US is ~6.4 GB, TTS 1–2 GB): many languages on one pool means bigger OS disks or more nodes.
 
 ---
 
@@ -930,36 +1038,73 @@ done
 # 1. Check release status
 helm list -n speech
 
-# 2. Check pod placement and resources
+# 2. Check pod placement and resources (replicas should be on different nodes)
 kubectl get pods -n speech -o wide
 kubectl describe pod -n speech -l app.kubernetes.io/instance=stt-en | grep -A 5 "Requests\|Limits"
 
-# 3. Probe the container endpoint
+# 3. Probe the container endpoints
 kubectl port-forward -n speech svc/stt-en-speech-container 5001:5000 &
 curl http://localhost:5001/ready    # → {"service":"speechtotext","ready":"ready","message":"Api Key is valid, no action needed."}
-
-# 4. Quick STT test (English)
-curl -X POST "http://localhost:5001/speech/recognition/conversation/cognitiveservices/v1?language=en-US" \
-  -H "Content-Type: audio/wav" \
-  --data-binary "@sample.wav"
-
-# 5. Quick TTS test (English, AvaNeural)
 kubectl port-forward -n speech svc/tts-en-speech-container 5002:5000 &
-curl http://localhost:5002/ready    # → {"service":"neuraltexttospeechonprem","ready":"ready","message":"Api Key is valid, no action needed."}
+curl http://localhost:5002/ready    # → {"service":"neuraltexttospeechonprem","ready":"ready",...}
 
+# 4. Quick TTS test (English, AvaNeural): plain HTTP POST
 curl -X POST "http://localhost:5002/cognitiveservices/v1" \
   -H "Content-Type: application/ssml+xml" \
   -H "X-Microsoft-OutputFormat: riff-24khz-16bit-mono-pcm" \
   --data '<speak version="1.0" xml:lang="en-US"><voice name="en-US-AvaNeural">Hello from disconnected Azure Speech.</voice></speak>' \
   --output sample-output.wav
 
-# Play sample-output.wav in any audio player — should hear synthesized speech.
-
 # List supported voices on this TTS container:
 curl http://localhost:5002/cognitiveservices/voices/list
 ```
 
-> 💡 **Note on `appVersion`**: The `Chart.yaml` `appVersion: "5.3.0"` tracks the **STT** image line. TTS uses an independent version stream (currently `4.7.0`; some en-US/hi-IN voices are also still published on `4.6.0`). Each example file pins its own image tag — see the [image naming pattern](#image-naming-pattern) section for current versions per workload.
+**STT needs a WebSocket client.** The STT 5.x container serves recognition over WebSocket only; a plain `curl -X POST` to the recognition path fails (405/404). Use the Speech SDK (`pip install azure-cognitiveservices-speech`) and transcribe the WAV you just synthesized:
+
+```python
+import azure.cognitiveservices.speech as speechsdk
+
+# Through port-forward: the SDK `host` parameter takes the bare container address
+cfg = speechsdk.SpeechConfig(host="ws://localhost:5001")
+cfg.speech_recognition_language = "en-US"
+audio = speechsdk.audio.AudioConfig(filename="sample-output.wav")
+result = speechsdk.SpeechRecognizer(speech_config=cfg, audio_config=audio).recognize_once()
+print(result.reason, result.text)   # ResultReason.RecognizedSpeech Hello from disconnected Azure Speech.
+```
+
+<a id="calling-the-containers"></a>
+### Calling the containers
+
+| Exposure | STT (Speech SDK) | TTS |
+|---|---|---|
+| Port-forward or LoadBalancer IP | `SpeechConfig(host="ws://<ip>:5000")` | `SpeechConfig(host="http://<ip>:5000")` or `POST http://<ip>:5000/cognitiveservices/v1` |
+| Gateway / Ingress with path routing | `SpeechConfig(endpoint="wss://<hostname>/stt/<locale>/speech/recognition/conversation/cognitiveservices/v1?language=<locale>")` | `POST https://<hostname>/tts/<locale>/cognitiveservices/v1` |
+
+The SDK `host` parameter accepts only scheme, host and port, so it can't carry the `/stt/<locale>` path; use `endpoint` with the full URL when routing by path. No subscription key is needed on these calls: the container authenticates to Azure for billing, not the client to the container. Protect the route itself (private load balancer, network policy, or an API gateway in front).
+
+---
+
+## Production operations
+
+**Graceful drain for live calls.** When a pod is removed (scale-in, rollout, node upgrade), it leaves the Service endpoints, so no new sessions reach it, and then runs its `preStop` sleep while open sessions finish. The examples use 300 s for STT (grace period 330 s) and 15 s for TTS (grace period 45 s). Set `preStopSleepSeconds` to your longest normal call. Sessions still open when the grace period ends are cut, and clients should reconnect.
+
+**Rollouts on full pools.** The chart default (`maxSurge: 1`, `maxUnavailable: 0`) needs room for one extra pod. The examples use `maxSurge: 0`, `maxUnavailable: 1`, so `helm upgrade`, secret rotation and `kubectl rollout restart` work on a pool with no spare capacity, at the cost of one replica fewer during the rollout. If you enable the cluster autoscaler on the speech pools (`az aks nodepool update --enable-cluster-autoscaler --min-count 2 --max-count N`), you can go back to surging. Change the strategy through Helm values; don't `kubectl patch` chart-owned objects, because the next `helm upgrade` conflicts with or reverts the patch.
+
+**Disruption budget.** Each release with 2 or more replicas gets a PodDisruptionBudget (`minAvailable: 1`), so node drains and AKS upgrades evict one replica at a time.
+
+**Autoscaling.** The HPA scales on CPU (75 %). That tracks STT load reasonably, but the real STT limit is the decoder count per pod (`DECODER_MAX_COUNT`): once every decoder is busy, extra sessions wait for a free one and latency rises, even if CPU stays below the target. Size `minReplicas` for normal peak sessions (`sessions ÷ decoders per pod`) and keep `maxReplicas` within what the pool can schedule (max nodes × pods per node) and within your regional vCPU quota. For session-based scaling, use custom metrics with KEDA or the Prometheus adapter.
+
+**TTS warm-up.** A TTS pod reports ready before its first synthesis, and that first request is slow (we measured ~11 s, against ~1.5 s for later requests). After a scale-out or rollout, send one short SSML request to each new pod (for example from a Job or your deployment pipeline) before it takes live traffic.
+
+**Weekly TTS restart.** Microsoft recommends restarting TTS containers weekly. Schedule `kubectl rollout restart deployment/<release>-speech-container -n speech` for each TTS release (CronJob with a ServiceAccount allowed to patch deployments, or your pipeline). It works on full pools with the example rollout strategy.
+
+**Memory and disk.**
+- Neural voices fit in a 16Gi limit; **multilingual voices need 24 GB**, so set `resources.limits.memory=24Gi` for those.
+- Images are large (STT en-US ~6.4 GB, TTS 1–2 GB) and pull in 20 s–1.5 min. Size node OS disks for every image on the pool. Mirror the images to Azure Container Registry, and use ACR artifact streaming or a pre-pull DaemonSet if scale-out time matters.
+
+**Security defaults.** Pods run as the image's `nonroot` user (UID/GID 65532) with `seccompProfile: RuntimeDefault`, all capabilities dropped, privilege escalation off and no ServiceAccount token, which passes the Kubernetes "restricted" Pod Security Standard. The API key is still visible in the container's command line; see [§4](#4-speech-credentials-secret).
+
+> 💡 **Note on `appVersion`**: `Chart.yaml` `appVersion: "5.4.0"` tracks the **STT** image line. The `app.kubernetes.io/version` label on each release is taken from the image tag it actually runs (for example `4.9.0` for a TTS release), so inventory and monitoring show the real version.
 
 ---
 
@@ -985,6 +1130,8 @@ helm history stt-en -n speech
 helm rollback stt-en 1 -n speech
 ```
 
+> ⚠️ **Upgrading from 1.3.x to 1.4.0:** 1.4.0 changes several defaults (non-root security context, TCP liveness probe, startup probe, PodDisruptionBudget, topology spread, `maxReplicas: 6`, no ServiceAccount token) and the examples no longer enable NGINX Ingress. Re-apply your example file plus a routing overlay (or `--set ingress.enabled=true`) rather than `--reuse-values`, and read the [CHANGELOG](../../CHANGELOG.md) first.
+
 ---
 
 ## Uninstalling
@@ -1006,9 +1153,14 @@ kubectl delete namespace speech     # optional cleanup
 | Pod log `Container does not have a valid disconnected container license` | Disconnected commitment not active on Speech resource | Purchase commitment tier in Azure portal |
 | Image pull fails `ImagePullBackOff` | Firewall blocks `mcr.microsoft.com` | Whitelist MCR endpoints (see [Network](#2-network--firewall-whitelisting)) |
 | `helm install` errors `args.billing is required` | Forgot `--set secretRef.enabled=true` AND no inline billing | Either enable secretRef or pass `--set args.billing=...` |
-| Pod runs but `/ready` returns 503 for ~60s | Speech model still loading from disk | Wait 60–90s; increase readiness probe `initialDelaySeconds` if needed |
+| `helm install` errors `additional properties '…' not allowed` | Misspelled or unsupported key (the chart validates values against `values.schema.json`) | Fix the key name; see the [values reference](#configurable-values-reference) |
+| Pod runs but `/ready` returns 503 for a few minutes | Speech model still loading from disk | Normal; the startup probe allows up to 10 min. On slow nodes raise `startupProbe.failureThreshold` |
+| `CreateContainerConfigError`, `secret "…" not found` with Key Vault enabled | The CSI driver couldn't sync the Secret (identity has no access, wrong vault/tenant/client ID) | `kubectl describe pod` and `kubectl get events -n speech` show the CSI mount error; check the role assignment and `secretProviderClass.*` values |
+| `kubectl rollout restart` / `helm upgrade` never finishes; new pod `Pending` with `Insufficient cpu` | Rollout strategy surges one extra pod on a full pool | Use the examples' `maxSurge: 0` / `maxUnavailable: 1`, or enable the cluster autoscaler on the pool |
+| HTTPRoute returns 404 | Request `Host` header doesn't match `gatewayApi.hostname`/`hostnames`, or the path is missing the `/stt/<locale>` prefix | Call the exact hostname; add extra names under `gatewayApi.hostnames` |
 | HPA stays at 1 replica under load | Metrics-server missing / wrong target | `kubectl top pods -n speech`; verify metrics-server installed |
-| Multiple pods on same node despite split pools | Soft affinity fell back because target pool full | Scale that pool, or check the pool's taint/label matches the release's `nodePool` |
+| Both replicas of a release on one node | The pool has one node, or `topologySpread.whenUnsatisfiable=ScheduleAnyway` let the scheduler pack them | Give the pool at least 2 nodes; set `topologySpread.whenUnsatisfiable=DoNotSchedule` to make spreading mandatory |
+| Speech pod on a system or other non-speech node | Soft affinity fell back because the target pool was full | Scale the pool, set `nodePoolAffinity=required`, or taint the system pool `CriticalAddonsOnly=true:NoSchedule` |
 | Pod lands on (or stays `Pending` off) the wrong pool after upgrading from chart 1.2.x | Examples now target `stt-hi`/`stt-other`/`tts-hi`/`tts-other`; pools still labelled `workload=stt`/`workload=tts` | Relabel/retaint the pools (see [§3](#3-node-pools-taints--labels-four-pool-pattern)), or set `nodePool=stt` / `nodePool=tts` |
 
 ---

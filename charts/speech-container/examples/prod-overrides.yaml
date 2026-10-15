@@ -16,10 +16,11 @@
 
 nodePool: speech
 
-# ---- Optional: disruption budget (uncomment for prod) -----------------------
-# podDisruptionBudget:
-#   enabled: true
-#   minAvailable: 1
+# ---- Hard placement (optional) ----------------------------------------------
+# Never schedule speech pods outside the shared pool (no fallback to other
+# nodes). Pods stay Pending if the pool is full, so pair it with the cluster
+# autoscaler on the pool.
+# nodePoolAffinity: required
 
 # ---- Optional: tighten or loosen unified resource defaults ------------------
 # resources:

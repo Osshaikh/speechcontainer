@@ -28,6 +28,8 @@ helm install stt-en speech-container/speech-container -n speech \
   --set secretRef.name=speech-credentials
 ```
 
+The examples create a ClusterIP Service. To call the containers from outside the cluster, add a routing overlay, for example AKS app routing with Gateway API: `-f examples/approuting-gateway.yaml --set gatewayApi.hostname=<your-hostname>`.
+
 Full installation guide, prerequisites (network whitelisting, node pools), and `helm install` examples → **[charts/speech-container/README.md](charts/speech-container/README.md)**.
 
 Voice-workload capacity planning (per-pod throughput, sizing for a target call volume, reference table up to 5M calls/month) → **[Capacity planning](#capacity-planning)** further down this README.
@@ -40,9 +42,10 @@ speechcontainer/
 │   └── speech-container/         # the Helm chart
 │       ├── Chart.yaml
 │       ├── values.yaml
+│       ├── values.schema.json    # rejects unknown or mistyped values
 │       ├── README.md             # full install + ops guide
 │       ├── templates/
-│       └── examples/             # ready-to-use values for STT/TTS en-US, hi-IN
+│       └── examples/             # STT/TTS values for en-US, hi-IN, ta-IN + routing overlays
 ├── CHANGELOG.md
 ├── CONTRIBUTING.md
 ├── SECURITY.md
@@ -144,7 +147,7 @@ Recommended: 2 pods minimum  (HA + headroom)
 
 ### Reference sizing table
 
-| Monthly calls | Peak calls/hr (3×) | STT pods (req 4c/4Gi) | TTS pods (req 6c/12Gi) | Min STT nodes (total) | Min TTS nodes (total) |
+| Monthly calls | Peak calls/hr (3×) | STT pods (req 4c/8Gi) | TTS pods (req 6c/12Gi) | Min STT nodes (total) | Min TTS nodes (total) |
 |---|---|---|---|---|---|
 | 10 k    | ~42   | 1 (+ 1 HA) | 1 (+ 1 HA) | 1 (compute-opt 16c)  | 1 (memory-opt 16c) |
 | 100 k   | ~420  | 2          | 2          | 2 (compute-opt 16c)  | 2 (memory-opt 16c) |
@@ -153,7 +156,7 @@ Recommended: 2 pods minimum  (HA + headroom)
 | 5 M     | ~21 k | 11         | 35         | 11 (compute-opt 16c) | 35 (memory-opt 16c) |
 
 > Node count = pod count when using chart minimum requests (1 pod/node fits on a 16-core node with our 4c-STT / 6c-TTS requests).
-> **Four-pool layout:** node totals are split between the Hindi and other-language pool of each workload type, according to your traffic mix. Each pool needs at least 1 node (2 for node-level HA), so the four-pool minimum is 2 STT + 2 TTS nodes even where the table shows 1.
+> **Four-pool layout:** node totals are split between the Hindi and other-language pool of each workload type, according to your traffic mix. Each pool needs at least 1 node (2 for node-level HA), so the four-pool minimum is 2 STT + 2 TTS nodes even where the table shows 1. The chart spreads each release's replicas across nodes, but with one node per pool both replicas still share it, so plan 2 nodes per pool for production.
 > Increase peak multiplier (× factor) if your traffic profile is spikier (e.g., 5× for retail flash events, 10× for emergency campaigns).
 
 ### Tunable assumptions in this model
@@ -161,8 +164,8 @@ Recommended: 2 pods minimum  (HA + headroom)
 | Variable | Default | Where to change |
 |---|---|---|
 | Average call duration | 30 s | Multiply formula by `(your_avg_seconds / 30)` |
-| STT concurrency/core | 2 sessions | `numberOfConcurrentRequest` env var (also `DECODER_MAX_COUNT`) |
-| TTS concurrency/8-core pod | 5 sessions | `numberOfConcurrentRequest` env var |
+| STT concurrency/core | 2 sessions | `concurrency.numberOfConcurrentRequest` (sets `DECODER_MAX_COUNT`, STT only) |
+| TTS concurrency/8-core pod | 5 sessions | No container setting: cap concurrent requests in the client or gateway, and size replicas |
 | Peak-to-average ratio | 3× | Depends on traffic shape (BFSI ≈ 2×, retail ≈ 3–5×) |
 | HA replicas | +1 baseline | Maintain at least 2 pods per workload always |
 

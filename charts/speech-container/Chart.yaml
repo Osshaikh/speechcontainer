@@ -1,8 +1,8 @@
 apiVersion: v2
 name: speech-container
 type: application
-version: 1.3.0
-appVersion: "5.3.0"
+version: 1.4.0
+appVersion: "5.4.0"
 description: |
   Helm chart for deploying Azure AI Speech disconnected containers (Speech-to-Text
   and Neural Text-to-Speech) on any Kubernetes platform. Fully parameterised CPU

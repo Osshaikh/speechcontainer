@@ -12,12 +12,12 @@
 #    - Azure allocates a private IP from the AKS node subnet (e.g. 10.224.0.45)
 #      and binds it to the LB frontend. That IP is routable everywhere VNet
 #      routing reaches.
-#    - ingress.enabled=false disables the chart's NGINX Ingress rule, since
+#    - ingress.enabled=false keeps the chart's NGINX Ingress off, since
 #      this layout exposes the container via LB directly.
 #
 #  Usage (layer on top of any language example):
 #    helm upgrade --install tts-hi speech-container/speech-container \
-#      -n speech --version 1.3.0 \
+#      -n speech --version 1.4.0 \
 #      -f speech-container/examples/tts-hi.yaml \
 #      -f speech-container/examples/internal-lb.yaml \
 #      --set secretRef.enabled=true \
@@ -59,8 +59,9 @@ service:
   #   - 10.100.0.0/24        # a peered consumer subnet
   #   - 192.168.1.0/24       # on-prem CIDR via VPN
 
-# Disable the chart's NGINX Ingress — this layout exposes the container via
+# Keep the chart's NGINX Ingress off: this layout exposes the container via
 # the LB directly. Leaving both Ingress and LB enabled is wasteful (two
-# entrypoints) and the chart fails fast if both are set alongside Gateway API.
+# entrypoints). Clients connect to the IP with the SDK `host` parameter, e.g.
+# ws://10.224.0.45:5000 (STT) or http://10.224.0.45:5000 (TTS).
 ingress:
   enabled: false
