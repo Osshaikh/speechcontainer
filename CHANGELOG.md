@@ -5,6 +5,11 @@ All notable changes to the `speech-container` Helm chart are documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.3] - 2026-10-15
+
+### Changed
+- README deploy path installs **Hindi STT and Hindi TTS** with one explicit `helm upgrade --install` command each (image, node pool and route listed), instead of a four-release loop. English is a one-line note (same command with `stt-en.yaml` / `tts-en.yaml`). Steps 5-7 (checks, tests through the Gateway, TTS warm-up), the Key Vault loops and uninstall now cover the Hindi releases.
+
 ## [1.4.2] - 2026-10-15
 
 Fixes from a second review of the README deploy path (AKS ready, four containers behind Gateway API).

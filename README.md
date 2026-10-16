@@ -17,7 +17,7 @@ The containers run in **connected mode**: audio and text are processed inside yo
 HOST=speech.contoso.com
 helm repo add speech-container https://osshaikh.github.io/speechcontainer/
 helm repo update
-helm pull speech-container/speech-container --version 1.4.2 --untar && cd speech-container
+helm pull speech-container/speech-container --version 1.4.3 --untar && cd speech-container
 
 kubectl create namespace speech
 kubectl create secret generic speech-credentials -n speech \
@@ -28,7 +28,7 @@ kubectl create secret generic speech-credentials -n speech \
 sed "s/speech.contoso.com/$HOST/" examples/gateway.yaml | kubectl apply -n speech -f -
 
 for rel in stt-hi stt-en tts-hi tts-en; do
-  helm upgrade --install $rel speech-container/speech-container -n speech --version 1.4.2 \
+  helm upgrade --install $rel speech-container/speech-container -n speech --version 1.4.3 \
     -f examples/$rel.yaml -f examples/values-gateway-route.yaml \
     --set secretRef.enabled=true --set gatewayApi.hostname=$HOST \
     --wait --timeout 20m

@@ -6,7 +6,7 @@ The containers run in **connected mode**: audio and text are processed inside yo
 
 - **Chart repo**: `https://osshaikh.github.io/speechcontainer/`
 - **Source**: `https://github.com/Osshaikh/speechcontainer`
-- **Chart version**: 1.4.2
+- **Chart version**: 1.4.3
 - **Images**: STT 5.4.0 (en-US, hi-IN; versions differ per locale, for example ta-IN is on 5.3.0) / TTS 4.9.0 (en-US AvaNeural, hi-IN SwaraNeural, ta-IN PallaviNeural)
 - **Requires**: Kubernetes ≥ 1.30, Helm ≥ 3.10 (Helm 4 supported), Azure CLI
 
@@ -59,7 +59,7 @@ The containers run in **connected mode**: audio and text are processed inside yo
                          └────────────────────────────┘
 ```
 
-Four Helm releases of this chart, one per language and workload, behind one shared Gateway:
+One Helm release of this chart per language and workload, behind one shared Gateway. The deploy steps install the two Hindi releases; English and other languages use the same command with a different example file:
 
 | Release | Values file | Image tag | Node pool (`nodePool`) | Route |
 |---|---|---|---|---|
@@ -175,7 +175,7 @@ Set these once, in the shell you deploy from; every command below uses them:
 ```bash
 NS=speech                          # namespace for the releases and the Gateway
 HOST=speech.contoso.com            # your hostname; must match the certificate
-CHART_VERSION=1.4.2
+CHART_VERSION=1.4.3
 SPEECH_NAME=your-speech-resource   # Azure AI Speech resource (Prerequisites §2)
 SPEECH_RG=your-resource-group
 
@@ -216,7 +216,7 @@ kubectl create secret generic speech-credentials -n $NS \
 
 The four releases read this Secret (`--set secretRef.enabled=true`; default name `speech-credentials`, keys `billing` and `apikey`).
 
-- **Different Secret name or keys?** Add them to the install command in Step 4, for example `--set secretRef.name=bfl-speech-creds --set secretRef.billingKey=BILLING_URL --set secretRef.apiKeyKey=COG_KEY`.
+- **Different Secret name or keys?** Add them to each install command in Step 4, for example `--set secretRef.name=bfl-speech-creds --set secretRef.billingKey=BILLING_URL --set secretRef.apiKeyKey=COG_KEY`.
 - **Credentials in Azure Key Vault?** Skip 2b, do Step 3, then follow [Credentials from Azure Key Vault](#credentials-from-azure-key-vault) in place of Step 4.
 
 ### Step 3. Create the Gateway
@@ -237,28 +237,45 @@ Now create the DNS record `$HOST → $GW_IP`.
 
 `examples/gateway.yaml` is a Kubernetes manifest (apply it with `kubectl`); `examples/values-gateway-route.yaml` is the Helm values file that attaches each release to it. For a private IP, uncomment the manifest's `infrastructure.annotations` block before applying. The Gateway goes into `$NS`, next to the releases (its listener only accepts routes from its own namespace). The route file attaches by name (`speech-gateway`) and listener (`https`); if you change those, change both files.
 
-### Step 4. Install the four releases
+### Step 4. Install Hindi STT and Hindi TTS
+
+One Helm release per language and workload. The two commands differ only in the release name and its example file; the example file sets the image, node pool, resources and route path.
+
+**Hindi STT**: release `stt-hi`, image `5.4.0-amd64-hi-in`, pool `stt-hi`, route `https://$HOST/stt/hi-IN`
 
 ```bash
-for rel in stt-hi stt-en tts-hi tts-en; do
-  helm upgrade --install $rel speech-container/speech-container -n $NS --version $CHART_VERSION \
-    -f examples/$rel.yaml \
-    -f examples/values-gateway-route.yaml \
-    --set secretRef.enabled=true \
-    --set gatewayApi.hostname=$HOST \
-    --wait --timeout 20m
-done
+helm upgrade --install stt-hi speech-container/speech-container -n $NS --version $CHART_VERSION \
+  -f examples/stt-hi.yaml \
+  -f examples/values-gateway-route.yaml \
+  --set secretRef.enabled=true \
+  --set gatewayApi.hostname=$HOST \
+  --wait --timeout 20m
 ```
 
-- `examples/$rel.yaml` sets the image, resources, node pool (required affinity), replicas, drain settings and route path for that language.
+**Hindi TTS**: release `tts-hi`, voice SwaraNeural (`4.9.0-amd64-hi-in-swaraneural`), pool `tts-hi`, route `https://$HOST/tts/hi-IN`
+
+```bash
+helm upgrade --install tts-hi speech-container/speech-container -n $NS --version $CHART_VERSION \
+  -f examples/tts-hi.yaml \
+  -f examples/values-gateway-route.yaml \
+  --set secretRef.enabled=true \
+  --set gatewayApi.hostname=$HOST \
+  --wait --timeout 20m
+```
+
+**English (or another non-Hindi language):** repeat the same command with release `stt-en` and `-f examples/stt-en.yaml` (pool `stt-other`, route `/stt/en-US`), and with release `tts-en` and `-f examples/tts-en.yaml` (AvaNeural, pool `tts-other`, route `/tts/en-US`). Other languages: [Adding more languages](#adding-more-languages).
+
+What the flags do:
+
+- `examples/<release>.yaml` sets the image, resources, node pool (required affinity), replicas, drain settings and route path for that language.
 - `examples/values-gateway-route.yaml` is a Helm values file (pass it with `-f`, don't `kubectl apply` it). It turns on the HTTPRoute and attaches it to `speech-gateway`. The install fails if `gatewayApi.hostname` is missing, rather than creating a route that answers 404.
 - `--wait --timeout 20m`: the first pull of a large image plus model load can take several minutes, and the startup probe allows up to 10. Helm's default 5-minute timeout is too short.
 
 ### Step 5. Check pods and routes
 
 ```bash
-kubectl get pods -n $NS -o wide          # 8 pods Running and Ready, 2 per release, on their pools
-kubectl get httproute -n $NS             # stt-hi, stt-en, tts-hi, tts-en
+kubectl get pods -n $NS -o wide          # 4 pods Running and Ready, 2 per release, on stt-hi / tts-hi nodes
+kubectl get httproute -n $NS             # stt-hi, tts-hi
 kubectl get httproute -n $NS -o jsonpath='{range .items[*]}{.metadata.name}{": "}{range .status.parents[0].conditions[*]}{.type}={.status}{" "}{end}{"\n"}{end}'
 # every route: Accepted=True ResolvedRefs=True
 kubectl get pdb,hpa -n $NS
@@ -268,12 +285,11 @@ kubectl get pdb,hpa -n $NS
 
 These tests use `curl --resolve`, so they work before DNS is in place. If the certificate isn't from a CA your machine already trusts, add `--cacert <your-ca.crt>` (or `-k` for a self-signed test certificate).
 
-**Readiness of every language:**
+**Readiness:**
 
 ```bash
-for path in stt/hi-IN stt/en-US tts/hi-IN tts/en-US; do
-  curl -s --resolve "$HOST:443:$GW_IP" "https://$HOST/$path/ready"; echo
-done
+curl -s --resolve "$HOST:443:$GW_IP" "https://$HOST/stt/hi-IN/ready"; echo
+curl -s --resolve "$HOST:443:$GW_IP" "https://$HOST/tts/hi-IN/ready"; echo
 # STT: {"service":"speechtotext","ready":"ready","message":"Api Key is valid, no action needed."}
 # TTS: {"service":"neuraltexttospeechonprem","ready":"ready",...}
 ```
@@ -286,17 +302,11 @@ curl -s --resolve "$HOST:443:$GW_IP" -X POST "https://$HOST/tts/hi-IN/cognitives
   -H "X-Microsoft-OutputFormat: riff-16khz-16bit-mono-pcm" \
   --data '<speak version="1.0" xml:lang="hi-IN"><voice name="hi-IN-SwaraNeural">नमस्ते, आपकी कॉल हमारे लिए महत्वपूर्ण है।</voice></speak>' \
   -o tts-hi.wav
-
-curl -s --resolve "$HOST:443:$GW_IP" -X POST "https://$HOST/tts/en-US/cognitiveservices/v1" \
-  -H "Content-Type: application/ssml+xml" \
-  -H "X-Microsoft-OutputFormat: riff-16khz-16bit-mono-pcm" \
-  --data '<speak version="1.0" xml:lang="en-US"><voice name="en-US-AvaNeural">Hello, your call is important to us.</voice></speak>' \
-  -o tts-en.wav
 ```
 
-Both files should play as speech. The first request to each TTS pod is slow (see [Step 7](#step-7-warm-up-the-tts-pods)).
+`tts-hi.wav` should play as Hindi speech. The first request to each TTS pod is slow (see [Step 7](#step-7-warm-up-the-tts-pods)).
 
-**STT (Speech SDK over WebSocket), transcribing the files you just synthesized:**
+**STT (Speech SDK over WebSocket), transcribing the file you just synthesized:**
 
 STT is WebSocket only, so a plain `curl` POST doesn't work; use the Speech SDK (`pip install azure-cognitiveservices-speech`). The SDK needs `$HOST` to resolve (the DNS record, or an `/etc/hosts` entry pointing at `$GW_IP`), and the client must trust the certificate: the SDK uses the operating system's trust store (on Linux, OpenSSL: see [Configure OpenSSL for Linux](https://learn.microsoft.com/azure/ai-services/speech-service/how-to-configure-openssl-linux)).
 
@@ -306,7 +316,7 @@ import sys
 import azure.cognitiveservices.speech as speechsdk
 
 host = sys.argv[1]
-for locale, wav in [("hi-IN", "tts-hi.wav"), ("en-US", "tts-en.wav")]:
+for locale, wav in [("hi-IN", "tts-hi.wav")]:     # add ("en-US", "tts-en.wav") etc. for more languages
     endpoint = (f"wss://{host}/stt/{locale}/speech/recognition/"
                 f"conversation/cognitiveservices/v1?language={locale}")
     cfg = speechsdk.SpeechConfig(endpoint=endpoint)   # `host=` can't carry the /stt/<locale> path
@@ -318,23 +328,20 @@ for locale, wav in [("hi-IN", "tts-hi.wav"), ("en-US", "tts-en.wav")]:
         print("   ", result.cancellation_details.error_details)
 ```
 
-Expected for both locales: `ResultReason.RecognizedSpeech` and the text you synthesized.
+Expected: `ResultReason.RecognizedSpeech` and the Hindi text you synthesized.
 
 ### Step 7. Warm up the TTS pods
 
-Each TTS pod reports ready before its first synthesis, and that first request takes ~11 s (later ones ~1.5 s). Requests through the Gateway are load-balanced, so warm each pod directly, after every install, scale-out or rollout:
+Each TTS pod reports ready before its first synthesis, and that first request takes ~11 s (later ones ~1.5 s). Requests through the Gateway are load-balanced, so warm each pod directly, after every install, scale-out or rollout. For other TTS releases, change the release name, `xml:lang` and voice:
 
 ```bash
-for rel in tts-hi tts-en; do
-  if [ $rel = tts-hi ]; then lang=hi-IN voice=hi-IN-SwaraNeural; else lang=en-US voice=en-US-AvaNeural; fi
-  for pod in $(kubectl get pods -n $NS -l app.kubernetes.io/instance=$rel -o name); do
-    kubectl port-forward -n $NS $pod 15000:5000 >/dev/null & pf=$!; sleep 3
-    curl -s -o /dev/null -w "$pod %{http_code} %{time_total}s\n" \
-      -X POST http://localhost:15000/cognitiveservices/v1 \
-      -H "Content-Type: application/ssml+xml" -H "X-Microsoft-OutputFormat: riff-16khz-16bit-mono-pcm" \
-      --data "<speak version=\"1.0\" xml:lang=\"$lang\"><voice name=\"$voice\">Warm up.</voice></speak>"
-    kill $pf; wait $pf 2>/dev/null    # release local port 15000 before the next pod
-  done
+for pod in $(kubectl get pods -n $NS -l app.kubernetes.io/instance=tts-hi -o name); do
+  kubectl port-forward -n $NS $pod 15000:5000 >/dev/null & pf=$!; sleep 3
+  curl -s -o /dev/null -w "$pod %{http_code} %{time_total}s\n" \
+    -X POST http://localhost:15000/cognitiveservices/v1 \
+    -H "Content-Type: application/ssml+xml" -H "X-Microsoft-OutputFormat: riff-16khz-16bit-mono-pcm" \
+    --data '<speak version="1.0" xml:lang="hi-IN"><voice name="hi-IN-SwaraNeural">Warm up.</voice></speak>'
+  kill $pf; wait $pf 2>/dev/null    # release local port 15000 before the next pod
 done
 ```
 
@@ -372,7 +379,7 @@ ADDON_OBJECT_ID=$(az aks show -n <aks> -g <rg> \
 az role assignment create --assignee-object-id "$ADDON_OBJECT_ID" \
   --assignee-principal-type ServicePrincipal --role "Key Vault Secrets User" --scope "$KV_ID"
 
-for rel in stt-hi stt-en tts-hi tts-en; do
+for rel in stt-hi tts-hi; do      # add stt-en tts-en for English
   helm upgrade --install $rel speech-container/speech-container -n $NS --version $CHART_VERSION \
     -f examples/$rel.yaml \
     -f examples/values-gateway-route.yaml \
@@ -398,7 +405,7 @@ az role assignment create --assignee-object-id "$PRINCIPAL_ID" \
   --assignee-principal-type ServicePrincipal --role "Key Vault Secrets User" --scope "$KV_ID"
 OIDC=$(az aks show -n <aks> -g <rg> --query oidcIssuerProfile.issuerUrl -o tsv)
 
-for rel in stt-hi stt-en tts-hi tts-en; do
+for rel in stt-hi tts-hi; do      # add stt-en tts-en for English
   # The chart's ServiceAccount for a release is <release>-speech-container
   az identity federated-credential create --name $rel-fed --identity-name speech-mi -g <rg> \
     --issuer "$OIDC" --audience api://AzureADTokenExchange \
@@ -716,7 +723,7 @@ Re-apply your files rather than using `--reuse-values`, so new chart defaults ta
 ## Uninstalling
 
 ```bash
-helm uninstall stt-hi stt-en tts-hi tts-en -n $NS
+helm uninstall stt-hi tts-hi -n $NS                # plus any other releases you installed
 kubectl delete gateway speech-gateway -n $NS       # the shared Gateway and its load balancer
 kubectl delete secret speech-tls speech-credentials -n $NS
 kubectl delete namespace $NS                       # optional
