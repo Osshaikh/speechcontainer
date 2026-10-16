@@ -1,18 +1,19 @@
 # =============================================================================
-#  gateway.yaml: the shared Gateway for every speech release
+#  gateway-public.yaml: shared Gateway with a PUBLIC IP, HTTPS on port 443
 # -----------------------------------------------------------------------------
 #  A Kubernetes manifest (kubectl apply), not a Helm values file. Apply it once,
-#  into the namespace of the speech releases and after creating the TLS Secret
+#  into the namespace of the speech releases, after creating the TLS Secret
 #  `speech-tls` there. It has no namespace of its own: kubectl -n sets it.
-#  Replace speech.contoso.com with your hostname, for example:
 #
-#    sed "s/speech.contoso.com/$HOST/" examples/gateway.yaml | kubectl apply -n $NS -f -
+#    1. Change `hostname` below to your hostname (it must match the certificate
+#       and the --set gatewayApi.hostname you pass to helm).
+#    2. kubectl create secret tls speech-tls -n speech --cert=speech.crt --key=speech.key
+#    3. kubectl apply -n speech -f examples/gateway-public.yaml
 #
+#  Clients call https:// (TTS) and wss:// (STT).
+#  Private IP and no TLS instead: use examples/gateway-internal.yaml.
 #  Requires AKS app routing with Gateway API:
 #    az aks update -g <rg> -n <aks> --enable-gateway-api --enable-app-routing-istio
-#
-#  The speech releases attach to it through examples/values-gateway-route.yaml
-#  (parentRef name speech-gateway, sectionName https, same namespace).
 # =============================================================================
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
@@ -20,10 +21,6 @@ metadata:
   name: speech-gateway
 spec:
   gatewayClassName: approuting-istio
-  # Private IP (internal Azure load balancer) instead of a public one:
-  # infrastructure:
-  #   annotations:
-  #     service.beta.kubernetes.io/azure-load-balancer-internal: "true"
   listeners:
     - name: https
       hostname: speech.contoso.com

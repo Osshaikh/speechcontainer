@@ -93,16 +93,20 @@ jobs:
           expect_fail -f "$CHART/examples/stt-en.yaml" -f "$CHART/examples/values-gateway-route.yaml"
           expect_fail --set ingress.enabled=true --set ingress.path=/stt/en-US   # no ingress.host
 
-      - name: Gateway manifest matches the route overlay
+      - name: Gateway manifests match the route overlay
         run: |
           set -euo pipefail
-          gw="$CHART/examples/gateway.yaml"
           ov="$CHART/examples/values-gateway-route.yaml"
-          test "$(yq '.kind' "$gw")" = Gateway
-          test "$(yq '.metadata.name' "$gw")" = "$(yq '.gatewayApi.parentRef.name' "$ov")"
-          test "$(yq '.metadata.namespace' "$gw")" = null          # namespace comes from kubectl -n
           test -z "$(yq '.gatewayApi.parentRef.namespace' "$ov")"     # empty = release namespace
-          test "$(yq '.spec.listeners[0].name' "$gw")" = "$(yq '.gatewayApi.parentRef.sectionName' "$ov")"
+          test -z "$(yq '.gatewayApi.parentRef.sectionName' "$ov")"   # attach to either Gateway's listener
+          for gw in "$CHART/examples/gateway-public.yaml" "$CHART/examples/gateway-internal.yaml"; do
+            test "$(yq '.kind' "$gw")" = Gateway
+            test "$(yq '.metadata.name' "$gw")" = "$(yq '.gatewayApi.parentRef.name' "$ov")"
+            test "$(yq '.metadata.namespace' "$gw")" = null          # namespace comes from kubectl -n
+          done
+          test "$(yq '.spec.listeners[0].protocol' "$CHART/examples/gateway-public.yaml")" = HTTPS
+          test "$(yq '.spec.listeners[0].protocol' "$CHART/examples/gateway-internal.yaml")" = HTTP
+          test "$(yq '.spec.infrastructure.annotations["service.beta.kubernetes.io/azure-load-balancer-internal"]' "$CHART/examples/gateway-internal.yaml")" = true
 
       - name: Image tags exist on MCR
         run: |

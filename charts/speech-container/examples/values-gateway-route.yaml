@@ -7,21 +7,25 @@
 #  /tts/<locale>), so each release gets its own path on the shared hostname.
 #
 #    helm upgrade --install stt-en speech-container/speech-container -n speech \
-#      --version 1.4.3 \
+#      --version 1.4.4 \
 #      -f examples/stt-en.yaml \
 #      -f examples/values-gateway-route.yaml \
 #      --set secretRef.enabled=true \
 #      --set gatewayApi.hostname=speech.contoso.com     # REQUIRED
 #
 #  This is a Helm values file, not a Kubernetes manifest: pass it to helm with
-#  -f, don't kubectl apply it. The Gateway it attaches to is a separate manifest,
-#  examples/gateway.yaml, applied once into the releases' namespace (chart
-#  README, Deploy step 3). gatewayApi.parentRef below must match that Gateway.
+#  -f, don't kubectl apply it. It attaches to the Gateway `speech-gateway`,
+#  created once with kubectl from examples/gateway-public.yaml (public, HTTPS)
+#  or examples/gateway-internal.yaml (private, HTTP), in the releases'
+#  namespace (chart README, Deploy step 3). The same helm command works with
+#  either Gateway.
 #
 #  Clients call the path-routed URL with the Speech SDK `endpoint` parameter
 #  (the SDK `host` parameter does not accept a path):
-#    STT  wss://speech.contoso.com/stt/en-US/speech/recognition/conversation/cognitiveservices/v1
-#    TTS  https://speech.contoso.com/tts/en-US/cognitiveservices/v1
+#    public Gateway    STT wss://speech.contoso.com/stt/en-US/speech/recognition/conversation/cognitiveservices/v1
+#                      TTS https://speech.contoso.com/tts/en-US/cognitiveservices/v1
+#    internal Gateway  STT ws://speech.contoso.com/stt/en-US/speech/recognition/conversation/cognitiveservices/v1
+#                      TTS http://speech.contoso.com/tts/en-US/cognitiveservices/v1
 # =============================================================================
 
 ingress:
@@ -31,8 +35,12 @@ gatewayApi:
   enabled: true
   parentRef:
     name: speech-gateway            # your shared Gateway
-    namespace: ""                   # empty = the release namespace, where gateway.yaml is applied
-    sectionName: https              # listener name on the Gateway
+    namespace: ""                   # empty = the release namespace, where the Gateway is applied
+    # Empty = attach to the Gateway's listeners that accept the hostname: the
+    # `https` listener of gateway-public.yaml or the `http` listener of
+    # gateway-internal.yaml. Set it (https / http) only on a Gateway that has
+    # both listeners and you want the route on one of them.
+    sectionName: ""
   # REQUIRED: set with --set gatewayApi.hostname=<your hostname>. It must match
   # the Gateway listener hostname; requests with any other Host header get 404.
   # Left empty on purpose, so a forgotten hostname fails the install instead of

@@ -5,6 +5,21 @@ All notable changes to the `speech-container` Helm chart are documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.4] - 2026-10-16
+
+### Added
+- **`examples/gateway-internal.yaml`**: shared Gateway with a private IP (internal Azure load balancer) and a plain HTTP listener on port 80, no TLS. Optional annotations for a fixed private IP or subnet.
+
+### Changed
+- `examples/gateway.yaml` renamed to **`examples/gateway-public.yaml`** (public IP, HTTPS on port 443, TLS Secret `speech-tls`); content unchanged apart from comments.
+- `examples/values-gateway-route.yaml` no longer pins the listener (`gatewayApi.parentRef.sectionName` is empty), so the route attaches to the `https` listener of the public Gateway or the `http` listener of the internal one, with the same Helm command.
+- README Step 3 offers both Gateways (table of IP, protocol, requirements and client URLs) and sets the hostname by editing the file; Step 6 and "Calling the containers" cover `http://` / `ws://` for the internal Gateway; troubleshooting row for an internal Gateway that gets a public IP.
+- CI checks both Gateway manifests (name, no namespace, HTTPS vs HTTP, internal annotation).
+
+### Upgrade notes
+- Scripts using `examples/gateway.yaml` must switch to `examples/gateway-public.yaml` (or `gateway-internal.yaml`).
+- Existing releases installed with `sectionName: https` keep working; on upgrade with the new route file the route attaches to every listener of `speech-gateway` that accepts the hostname. If your Gateway has both an HTTP and an HTTPS listener and you want HTTPS only, add `--set gatewayApi.parentRef.sectionName=https`.
+
 ## [1.4.3] - 2026-10-15
 
 ### Changed

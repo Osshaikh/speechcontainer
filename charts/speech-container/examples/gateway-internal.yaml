@@ -1,0 +1,42 @@
+# =============================================================================
+#  gateway-internal.yaml: shared Gateway with a PRIVATE IP, plain HTTP on port 80
+# -----------------------------------------------------------------------------
+#  A Kubernetes manifest (kubectl apply), not a Helm values file. Apply it once,
+#  into the namespace of the speech releases. No TLS certificate or Secret is
+#  needed. It has no namespace of its own: kubectl -n sets it.
+#
+#    1. Change `hostname` below to your hostname (it must match the
+#       --set gatewayApi.hostname you pass to helm).
+#    2. kubectl apply -n speech -f examples/gateway-internal.yaml
+#    3. Point a private DNS record for the hostname at the Gateway's address.
+#
+#  The Gateway gets an IP from the AKS subnet through an internal Azure load
+#  balancer, reachable from the VNet, peered VNets and on-premises networks
+#  connected to them; not from the internet. Clients call http:// (TTS) and
+#  ws:// (STT). Traffic is unencrypted: restrict who can reach the IP (NSG).
+#
+#  Public IP with HTTPS instead: use examples/gateway-public.yaml.
+#  Requires AKS app routing with Gateway API:
+#    az aks update -g <rg> -n <aks> --enable-gateway-api --enable-app-routing-istio
+# =============================================================================
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: speech-gateway
+spec:
+  gatewayClassName: approuting-istio
+  infrastructure:
+    annotations:
+      service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+      # Optional: a fixed private IP (must be free in the subnet)
+      # service.beta.kubernetes.io/azure-load-balancer-ipv4: "10.224.0.50"
+      # Optional: a specific subnet in the cluster VNet
+      # service.beta.kubernetes.io/azure-load-balancer-internal-subnet: "speech-ilb-subnet"
+  listeners:
+    - name: http
+      hostname: speech.contoso.com
+      port: 80
+      protocol: HTTP
+      allowedRoutes:
+        namespaces:
+          from: Same

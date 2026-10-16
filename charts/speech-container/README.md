@@ -6,7 +6,7 @@ The containers run in **connected mode**: audio and text are processed inside yo
 
 - **Chart repo**: `https://osshaikh.github.io/speechcontainer/`
 - **Source**: `https://github.com/Osshaikh/speechcontainer`
-- **Chart version**: 1.4.3
+- **Chart version**: 1.4.4
 - **Images**: STT 5.4.0 (en-US, hi-IN; versions differ per locale, for example ta-IN is on 5.3.0) / TTS 4.9.0 (en-US AvaNeural, hi-IN SwaraNeural, ta-IN PallaviNeural)
 - **Requires**: Kubernetes ≥ 1.30, Helm ≥ 3.10 (Helm 4 supported), Azure CLI
 
@@ -163,7 +163,7 @@ If a running container can't reach the billing endpoint, it keeps running but st
 ### 4. Hostname, TLS certificate and DNS
 
 - **One hostname** for all languages, for example `speech.contoso.com`. Each language is a path under it.
-- **A TLS certificate for that hostname** (PEM certificate with full chain, plus its key) that your clients trust: from your organization's CA for internal clients, or from a public CA. A self-signed certificate is fine for a test, but every client then has to trust it explicitly.
+- **A TLS certificate for that hostname**, for the public HTTPS Gateway (PEM certificate with full chain, plus its key) that your clients trust: from your organization's CA for internal clients, or from a public CA. A self-signed certificate is fine for a test, but every client then has to trust it explicitly. The internal HTTP Gateway needs no certificate (see [Step 3](#step-3-create-the-gateway)).
 - **A DNS record** pointing the hostname at the Gateway's IP. You get the IP in [Step 3](#step-3-create-the-gateway). Use a private DNS zone if the Gateway uses an internal load balancer.
 
 ---
@@ -175,7 +175,7 @@ Set these once, in the shell you deploy from; every command below uses them:
 ```bash
 NS=speech                          # namespace for the releases and the Gateway
 HOST=speech.contoso.com            # your hostname; must match the certificate
-CHART_VERSION=1.4.3
+CHART_VERSION=1.4.4
 SPEECH_NAME=your-speech-resource   # Azure AI Speech resource (Prerequisites §2)
 SPEECH_RG=your-resource-group
 
@@ -193,7 +193,7 @@ helm repo add speech-container https://osshaikh.github.io/speechcontainer/
 helm repo update
 helm pull speech-container/speech-container --version $CHART_VERSION --untar
 cd speech-container
-ls examples/    # stt-*.yaml, tts-*.yaml, values-gateway-route.yaml, gateway.yaml, ...
+ls examples/    # stt-*.yaml, tts-*.yaml, values-gateway-route.yaml, gateway-public.yaml, gateway-internal.yaml, ...
 ```
 
 The rest of this guide runs from this directory. Installing with the same `--version` keeps the chart and its example files in step.
@@ -221,21 +221,50 @@ The four releases read this Secret (`--set secretRef.enabled=true`; default name
 
 ### Step 3. Create the Gateway
 
+The chart doesn't create the Gateway: you create it once with `kubectl`, and every release then attaches a route to it. Pick one of the two manifests in `examples/`:
+
+| | `examples/gateway-public.yaml` | `examples/gateway-internal.yaml` |
+|---|---|---|
+| IP | Public | Private, from the AKS subnet (internal load balancer) |
+| Protocol | HTTPS, port 443 | HTTP, port 80, no TLS |
+| Needs | TLS Secret `speech-tls` | Nothing |
+| Clients call | `https://` (TTS), `wss://` (STT) | `http://` (TTS), `ws://` (STT) |
+| Reachable from | Internet | AKS VNet, peered VNets, on-premises over VPN/ExpressRoute |
+
+Both create a Gateway named `speech-gateway`, so the Helm command in Step 4 is the same either way.
+
+**First, set your hostname in the file you chose.** It's in the chart folder from Step 1. Change the `hostname:` line under `listeners:` from `speech.contoso.com` to your hostname (`$HOST`), with any editor, or:
+
 ```bash
-# TLS certificate for $HOST (see Prerequisites §4)
-kubectl create secret tls speech-tls -n $NS --cert=speech.crt --key=speech.key
-
-# The shared Gateway: examples/gateway.yaml with your hostname, in $NS
-sed "s/speech.contoso.com/$HOST/" examples/gateway.yaml | kubectl apply -n $NS -f -
-kubectl wait --for=condition=Programmed gateway/speech-gateway -n $NS --timeout=5m
-
-GW_IP=$(kubectl get gateway speech-gateway -n $NS -o jsonpath='{.status.addresses[0].value}')
-echo "$GW_IP"
+sed -i "s/speech.contoso.com/$HOST/" examples/gateway-public.yaml      # or examples/gateway-internal.yaml
 ```
 
-Now create the DNS record `$HOST → $GW_IP`.
+**Public Gateway (HTTPS):**
 
-`examples/gateway.yaml` is a Kubernetes manifest (apply it with `kubectl`); `examples/values-gateway-route.yaml` is the Helm values file that attaches each release to it. For a private IP, uncomment the manifest's `infrastructure.annotations` block before applying. The Gateway goes into `$NS`, next to the releases (its listener only accepts routes from its own namespace). The route file attaches by name (`speech-gateway`) and listener (`https`); if you change those, change both files.
+```bash
+kubectl create secret tls speech-tls -n $NS --cert=speech.crt --key=speech.key   # certificate for $HOST
+kubectl apply -n $NS -f examples/gateway-public.yaml
+```
+
+**Internal Gateway (HTTP, private IP):**
+
+```bash
+kubectl apply -n $NS -f examples/gateway-internal.yaml
+```
+
+To pin the private IP or choose a subnet, uncomment the optional annotations in the file before applying.
+
+**Then, for either one:**
+
+```bash
+kubectl wait --for=condition=Programmed gateway/speech-gateway -n $NS --timeout=5m
+GW_IP=$(kubectl get gateway speech-gateway -n $NS -o jsonpath='{.status.addresses[0].value}')
+echo "$GW_IP"      # public IP, or 10.x.x.x for the internal Gateway
+```
+
+Now create the DNS record `$HOST → $GW_IP` (a private DNS zone for the internal Gateway).
+
+The Gateway goes into `$NS`, next to the releases (its listener only accepts routes from its own namespace). `examples/values-gateway-route.yaml` is the Helm values file that attaches each release to `speech-gateway`; it doesn't pin a listener, so it works with both manifests.
 
 ### Step 4. Install Hindi STT and Hindi TTS
 
@@ -283,7 +312,9 @@ kubectl get pdb,hpa -n $NS
 
 ### Step 6. Test through the Gateway
 
-These tests use `curl --resolve`, so they work before DNS is in place. If the certificate isn't from a CA your machine already trusts, add `--cacert <your-ca.crt>` (or `-k` for a self-signed test certificate).
+These tests use `curl --resolve`, so they work before DNS is in place. They're written for the public HTTPS Gateway. If the certificate isn't from a CA your machine already trusts, add `--cacert <your-ca.crt>` (or `-k` for a self-signed test certificate).
+
+**Internal HTTP Gateway:** run them from a machine in the VNet, and change `:443:` to `:80:` and `https://` to `http://` (and `wss://` to `ws://` in the STT script), for example `curl -s --resolve "$HOST:80:$GW_IP" "http://$HOST/stt/hi-IN/ready"`.
 
 **Readiness:**
 
@@ -456,7 +487,8 @@ With `identity=workload` the chart annotates the ServiceAccount it creates with 
 | Exposure | STT (Speech SDK) | TTS |
 |---|---|---|
 | Port-forward or LoadBalancer IP | `SpeechConfig(host="ws://<ip>:5000")` | `SpeechConfig(host="http://<ip>:5000")` or `POST http://<ip>:5000/cognitiveservices/v1` |
-| Gateway / Ingress with path routing | `SpeechConfig(endpoint="wss://<hostname>/stt/<locale>/speech/recognition/conversation/cognitiveservices/v1?language=<locale>")` | `POST https://<hostname>/tts/<locale>/cognitiveservices/v1` |
+| Public Gateway (HTTPS) or Ingress with TLS | `SpeechConfig(endpoint="wss://<hostname>/stt/<locale>/speech/recognition/conversation/cognitiveservices/v1?language=<locale>")` | `POST https://<hostname>/tts/<locale>/cognitiveservices/v1` |
+| Internal Gateway (HTTP) | `SpeechConfig(endpoint="ws://<hostname>/stt/<locale>/speech/recognition/conversation/cognitiveservices/v1?language=<locale>")` | `POST http://<hostname>/tts/<locale>/cognitiveservices/v1` |
 
 The SDK `host` parameter accepts only scheme, host and port, so it can't carry the `/stt/<locale>` path; use `endpoint` with the full URL when routing by path. No subscription key is needed on these calls: the container authenticates to Azure for billing, not the client to the container. Protect the route itself (private load balancer, network policy, or an API gateway in front).
 
@@ -641,7 +673,7 @@ NGINX Ingress values (`ingress.*`) are in [Appendix B](#nginx-ingress).
 | Key | Default | Notes |
 |---|---|---|
 | `gatewayApi.enabled` | `false` | Render an HTTPRoute. Turned on by `examples/values-gateway-route.yaml` |
-| `gatewayApi.parentRef.name` / `.namespace` / `.sectionName` | `""` | The Gateway (and listener) to attach to |
+| `gatewayApi.parentRef.name` / `.namespace` / `.sectionName` | `""` | The Gateway (and listener) to attach to. `values-gateway-route.yaml` sets name `speech-gateway`; empty namespace = release namespace; empty `sectionName` = every listener that accepts the hostname |
 | `gatewayApi.hostname` | `""` | **Required** when `gatewayApi.enabled` (or set `hostnames`). Must be accepted by the Gateway listener |
 | `gatewayApi.hostnames` | `[]` | Extra hostnames, added to `gatewayApi.hostname` |
 | `gatewayApi.path` | `""` | Path prefix, set in examples (`/stt/<locale>`, `/tts/<locale>`); stripped before forwarding |
@@ -704,7 +736,7 @@ NGINX Ingress values (`ingress.*`) are in [Appendix B](#nginx-ingress).
 helm repo update speech-container
 helm pull speech-container/speech-container --version <new-version> --untar   # matching example files
 # File names changed in 1.4.2: approuting-gateway.yaml -> values-gateway-route.yaml,
-# gateway-approuting.yaml -> gateway.yaml
+# gateway-approuting.yaml -> gateway.yaml; and in 1.4.4: gateway.yaml -> gateway-public.yaml
 
 # Re-apply the same files and flags as the install, with the new version
 helm upgrade stt-hi speech-container/speech-container -n $NS --version <new-version> \
@@ -725,7 +757,7 @@ Re-apply your files rather than using `--reuse-values`, so new chart defaults ta
 ```bash
 helm uninstall stt-hi tts-hi -n $NS                # plus any other releases you installed
 kubectl delete gateway speech-gateway -n $NS       # the shared Gateway and its load balancer
-kubectl delete secret speech-tls speech-credentials -n $NS
+kubectl delete secret speech-tls speech-credentials -n $NS   # speech-tls exists only with the public Gateway
 kubectl delete namespace $NS                       # optional
 ```
 
@@ -748,8 +780,9 @@ kubectl delete namespace $NS                       # optional
 | `/ready` returns 503 for a few minutes after start | Model still loading | Normal; the startup probe allows 10 minutes. Raise `startupProbe.failureThreshold` on slow nodes |
 | Pods were serving, then every request fails; pods still Running | Billing endpoint unreachable (firewall change, DNS, outage) | Restore egress to the billing URL host; see [Network egress](#3-network-egress) |
 | `CreateContainerConfigError`, `secret "…" not found`, with Key Vault | CSI driver couldn't sync the Secret (no vault access; wrong vault, tenant or client ID) | `kubectl describe pod` and `kubectl get events -n $NS` show the mount error; check the role assignment and the `secretProviderClass.*` values |
-| Gateway not `Programmed` | TLS Secret `speech-tls` missing or in another namespace; app routing Gateway API not enabled | `kubectl describe gateway speech-gateway -n $NS`; `kubectl get gatewayclass approuting-istio` |
-| Route not `Accepted` | Gateway in a different namespace from the releases, `parentRef` name or `sectionName` doesn't match, or the listener doesn't accept the hostname | Apply `examples/gateway.yaml` with `-n $NS`; keep it and `examples/values-gateway-route.yaml` in step; use the listener's hostname |
+| Gateway not `Programmed` | Public Gateway: TLS Secret `speech-tls` missing or in another namespace. Either: app routing Gateway API not enabled | `kubectl describe gateway speech-gateway -n $NS`; `kubectl get gatewayclass approuting-istio` |
+| Internal Gateway gets a public IP, or no IP | `infrastructure.annotations` mis-indented, or the pinned `azure-load-balancer-ipv4` is in use or outside the subnet | `kubectl describe gateway speech-gateway -n $NS`; check `examples/gateway-internal.yaml` indentation and the IP |
+| Route not `Accepted` | Gateway in a different namespace from the releases, `parentRef` name or `sectionName` doesn't match, or the listener doesn't accept the hostname | Apply the Gateway manifest with `-n $NS`; keep the Gateway name `speech-gateway`; use the listener's hostname |
 | HTTPS returns 404 | Request `Host` doesn't match `gatewayApi.hostname`, or the path lacks `/stt/<locale>` / `/tts/<locale>` | Call `https://$HOST/<stt or tts>/<locale>/...`; add extra names under `gatewayApi.hostnames` |
 | `curl` works with `-k` but fails without it; the SDK can't connect | Client doesn't trust the certificate | Install your CA in the client's trust store (or use `--cacert`); see [Step 6](#step-6-test-through-the-gateway) |
 | First TTS request per pod takes ~11 s | Voice model not warmed up | [Step 7](#step-7-warm-up-the-tts-pods) |
