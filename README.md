@@ -17,7 +17,7 @@ The containers run in **connected mode**: audio and text are processed inside yo
 HOST=speech.contoso.com
 helm repo add speech-container https://osshaikh.github.io/speechcontainer/
 helm repo update
-helm pull speech-container/speech-container --version 1.4.4 --untar && cd speech-container
+helm pull speech-container/speech-container --version 1.5.0 --untar && cd speech-container
 
 kubectl create namespace speech
 kubectl create secret generic speech-credentials -n speech \
@@ -27,12 +27,20 @@ kubectl create secret generic speech-credentials -n speech \
 # Shared Gateway: public HTTPS (needs TLS Secret speech-tls) or examples/gateway-internal.yaml (private IP, HTTP)
 sed "s/speech.contoso.com/$HOST/" examples/gateway-public.yaml | kubectl apply -n speech -f -
 
-for rel in stt-hi stt-en tts-hi tts-en; do
-  helm upgrade --install $rel speech-container/speech-container -n speech --version 1.4.4 \
+# Hindi STT and TTS
+for rel in stt-hi tts-hi; do
+  helm upgrade --install $rel speech-container/speech-container -n speech --version 1.5.0 \
     -f examples/$rel.yaml -f examples/values-gateway-route.yaml \
     --set secretRef.enabled=true --set gatewayApi.hostname=$HOST \
     --wait --timeout 20m
 done
+
+# Any other language: shared base file + the language's image and path (both required)
+helm upgrade --install stt-mr speech-container/speech-container -n speech --version 1.5.0 \
+  -f examples/stt-other.yaml -f examples/values-gateway-route.yaml \
+  --set image.tag=5.3.0-amd64-mr-in --set gatewayApi.path=/stt/mr-IN \
+  --set secretRef.enabled=true --set gatewayApi.hostname=$HOST \
+  --wait --timeout 20m
 ```
 
 Step-by-step guide (prerequisites, TLS and DNS, Key Vault, tests through the Gateway, more languages, operations) → **[charts/speech-container/README.md](charts/speech-container/README.md)**.
@@ -50,7 +58,7 @@ speechcontainer/
 │       ├── values.schema.json    # rejects unknown or mistyped values
 │       ├── README.md             # full install + ops guide
 │       ├── templates/
-│       └── examples/             # STT/TTS values (en-US, hi-IN, ta-IN), route overlays, public + internal Gateway manifests
+│       └── examples/             # Hindi and non-Hindi STT/TTS values, route overlay, public + internal Gateway manifests
 ├── CHANGELOG.md
 ├── CONTRIBUTING.md
 ├── SECURITY.md

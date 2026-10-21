@@ -19,14 +19,14 @@ helm lint charts/speech-container
 
 # Render the templates (dry-run)
 helm template test charts/speech-container \
-  -f charts/speech-container/examples/stt-en.yaml \
+  -f charts/speech-container/examples/stt-hi.yaml \
   --set secretRef.enabled=true \
   --set secretRef.name=test-secret
 
 # Install to a real cluster (e.g. kind)
 kind create cluster --name speech-dev
-helm install stt-en charts/speech-container -n speech --create-namespace \
-  -f charts/speech-container/examples/stt-en.yaml \
+helm install stt-hi charts/speech-container -n speech --create-namespace \
+  -f charts/speech-container/examples/stt-hi.yaml \
   --set secretRef.enabled=true --set secretRef.name=speech-credentials
 ```
 

@@ -1,4 +1,4 @@
-{{ .Chart.Name }} {{ .Chart.Version }} — release "{{ .Release.Name }}" deployed in namespace "{{ .Release.Namespace }}".
+{{ .Chart.Name }} {{ .Chart.Version }} - release "{{ .Release.Name }}" deployed in namespace "{{ .Release.Namespace }}".
 
 Mode               : {{ .Values.mode }}
 Image              : {{ include "speech-container.image.full" . }}
@@ -11,7 +11,8 @@ Concurrency        : not set by the chart (TTS: keep fewer than 5 concurrent req
 {{- end }}
 Service type       : {{ .Values.service.type }} (port {{ .Values.service.port }})
 {{- if .Values.gatewayApi.enabled }}
-Route              : https://{{ .Values.gatewayApi.hostname | default (first .Values.gatewayApi.hostnames) }}{{ .Values.gatewayApi.path }}/ (Gateway {{ .Values.gatewayApi.parentRef.name }})
+Route              : {{ .Values.gatewayApi.hostname | default (first .Values.gatewayApi.hostnames) }}{{ .Values.gatewayApi.path }}/ via Gateway {{ .Values.gatewayApi.parentRef.name }}
+                     (http:// and ws:// on an HTTP listener, https:// and wss:// on HTTPS)
 {{- else if .Values.ingress.enabled }}
 Route              : {{ ternary "https" "http" .Values.ingress.tls.enabled }}://{{ .Values.ingress.host }}{{ .Values.ingress.path }}/ (Ingress)
 {{- end }}

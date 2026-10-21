@@ -1,0 +1,98 @@
+# =============================================================================
+#  tts-other.yaml: Neural Text-to-Speech for any NON-HINDI voice
+# -----------------------------------------------------------------------------
+#  Shared base for every non-Hindi TTS release: resources, replicas, drain
+#  settings and the shared non-Hindi pool (tts-other). It sets NO voice, so two
+#  values are REQUIRED at install time (the install fails with a clear error if
+#  they're missing):
+#    --set image.tag=<version>-amd64-<locale>-<voice>neural   the voice image
+#    --set gatewayApi.path=/tts/<locale>                      its route path (with a route)
+#
+#  One release per voice (one Deployment, one image, one route), e.g. Marathi:
+#    helm upgrade --install tts-mr speech-container/speech-container -n speech \
+#      -f examples/tts-other.yaml -f examples/values-gateway-route.yaml \
+#      --set image.tag=4.9.0-amd64-mr-in-aarohineural --set gatewayApi.path=/tts/mr-IN \
+#      --set secretRef.enabled=true --set gatewayApi.hostname=speech.contoso.com
+#
+#  Voices (SSML voice name in brackets; check new tags on MCR first):
+#    English  4.9.0-amd64-en-us-avaneural       /tts/en-US  (en-US-AvaNeural)
+#    Marathi  4.9.0-amd64-mr-in-aarohineural    /tts/mr-IN  (mr-IN-AarohiNeural)
+#    Gujarati 4.9.0-amd64-gu-in-dhwanineural    /tts/gu-IN  (gu-IN-DhwaniNeural)
+#    Tamil    4.9.0-amd64-ta-in-pallavineural   /tts/ta-IN  (ta-IN-PallaviNeural)
+#    Telugu   4.9.0-amd64-te-in-shrutineural    /tts/te-IN  (te-IN-ShrutiNeural)
+#    Bengali  4.9.0-amd64-bn-in-tanishaaneural  /tts/bn-IN  (bn-IN-TanishaaNeural)
+#  Hindi TTS: use examples/tts-hi.yaml (dedicated pool) instead.
+# =============================================================================
+
+mode: tts
+
+image:
+  tag: ""          # REQUIRED: --set image.tag=<version>-amd64-<locale>-<voice>neural
+
+# Neural TTS sizing per Microsoft Learn host-resource guidance (6 core / 12 GB
+# minimum). Limits inherit from chart values.yaml (8c / 16Gi). Multilingual
+# voices (for example en-US-AvaMultilingualNeural) need 24 GB: raise
+# resources.limits.memory to 24Gi for those.
+resources:
+  requests:
+    cpu: "6"
+    memory: "12Gi"
+
+# TTS has no server-side concurrency setting. Microsoft recommends fewer than
+# 5 concurrent requests per 8-core container: cap it at the gateway or in the
+# client, and size replicas for the peak.
+
+replicaCount: 2
+
+# maxReplicas: keep it within what the node pool can actually schedule
+# (pool max nodes x pods per node), or the HPA plans pods that stay Pending.
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 75
+
+# Dedicated pools usually have no room for an extra surge pod, so replace one
+# pod at a time instead (one replica fewer during the rollout). With spare
+# capacity or the cluster autoscaler you can return to
+# maxSurge: 1 / maxUnavailable: 0.
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 0
+    maxUnavailable: 1
+
+# ---- Graceful drain ----------------------------------------------------------
+# TTS requests are short, so a brief drain is enough to finish in-flight
+# synthesis. Must be < terminationGracePeriodSeconds.
+preStopSleepSeconds: 15
+terminationGracePeriodSeconds: 45
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+service:
+  type: ClusterIP
+  port: 5000
+
+# ---- Route -----------------------------------------------------------------
+# Path of this voice on the shared Gateway hostname. REQUIRED with a route
+# (-f examples/values-gateway-route.yaml): --set gatewayApi.path=/tts/<locale>.
+# Clients then call https://<your hostname>/tts/<locale>/cognitiveservices/v1
+gatewayApi:
+  path: ""
+
+# ---- Pod scheduling: shared non-Hindi TTS node pool -------------------------
+# Every non-Hindi TTS voice (en-US, mr-IN, ta-IN, ...) shares one pool, prepared as:
+#   az aks nodepool add ... --name ttsother \
+#     --node-taints workload=tts-other:NoSchedule \
+#     --labels workload=tts-other
+# The chart turns `nodePool` into a toleration for that taint plus node
+# affinity for that label (required here, see nodePoolAffinity below).
+# Different pool labels (for example agentpool=nonhinditts)? Pass
+# --set nodePoolKey=agentpool --set nodePool=nonhinditts.
+nodePool: tts-other
+# Never schedule outside the pool (pods wait as Pending if it's full, so enable
+# the cluster autoscaler on it). Use `preferred` to allow fallback to other nodes.
+nodePoolAffinity: required

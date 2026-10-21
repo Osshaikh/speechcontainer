@@ -60,7 +60,7 @@ gatewayApi:
 
 # ---- Pod scheduling: dedicated Hindi TTS node pool --------------------------
 # Pool tainted workload=tts-hi:NoSchedule and labelled workload=tts-hi.
-# The chart adds the matching toleration + node affinity (see tts-en.yaml).
+# The chart adds the matching toleration + node affinity (see tts-other.yaml).
 nodePool: tts-hi
 # Never schedule outside the pool (pods wait as Pending if it's full, so enable
 # the cluster autoscaler on it). Use `preferred` to allow fallback to other nodes.

@@ -5,6 +5,30 @@ All notable changes to the `speech-container` Helm chart are documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-10-21
+
+Hindi and non-Hindi languages now have separate example files, and a non-Hindi release must name its language explicitly.
+
+### Added
+- **`examples/stt-other.yaml`** and **`examples/tts-other.yaml`**: shared base files for every non-Hindi STT language and TTS voice (resources, decoders, replicas, drain, PDB, required affinity to the `stt-other` / `tts-other` pools). They set no language: `image.tag` and, with a route, `gatewayApi.path` are **required** at install time. The file headers list tags and paths for English, Marathi, Gujarati, Tamil, Telugu and Bengali.
+- **`image.tag` is required**: an empty tag fails with `image.tag is required: pass this language's STT image, --set image.tag=<version>-amd64-<locale> (e.g. 5.3.0-amd64-mr-in) ...` (or the voice-image wording for TTS).
+- **STT/TTS image guard**: for MCR-style tags (`<version>-amd64-...`), an STT release with a voice tag (ending in `neural`), or a TTS release with an STT tag, fails with a message naming the right base file. Custom tags (for example `latest`) aren't checked.
+- Clearer `gatewayApi.path` / `ingress.path` errors with a language example.
+- `NOTES.txt` prints the route as `<host><path>/ via Gateway <name>` with the scheme per listener (it printed `https://` even on the internal HTTP Gateway), and uses plain ASCII so Windows `cmd` doesn't show a garbled dash.
+- Validated live on AKS (`aks-bfl-speech`): Marathi STT and TTS from `stt-other.yaml` / `tts-other.yaml` behind `gateway-internal.yaml` (private IP, HTTP 80): routes accepted, `/ready` 200 through the Gateway, TTS to STT round trip recognized.
+- CI renders `stt-other` / `tts-other` with a language, and checks the new failures (missing tag, swapped STT/TTS tag, route without path).
+
+### Removed
+- `examples/stt-en.yaml`, `tts-en.yaml`, `stt-ta.yaml`, `tts-ta.yaml`. English and Tamil install from `stt-other.yaml` / `tts-other.yaml` with their tag and path (README "Install a non-Hindi language").
+
+### Changed
+- `values.schema.json` allows an empty `image.tag`, so the chart's own message is shown instead of a generic schema error. The chart default (`5.4.0-amd64-en-us`) is unchanged.
+- README: "What you deploy", Step 4 (non-Hindi block with English), "Install a non-Hindi language" (tag/path/voice table, Marathi commands, the checks), Appendix D uses the `-other` files, troubleshooting rows for the new errors; root README quick start installs Hindi plus a Marathi example.
+
+### Upgrade notes
+- Replace `-f examples/stt-en.yaml` with `-f examples/stt-other.yaml --set image.tag=5.4.0-amd64-en-us --set gatewayApi.path=/stt/en-US` (TTS: `tts-other.yaml`, `4.9.0-amd64-en-us-avaneural`, `/tts/en-US`; Tamil: `5.3.0-amd64-ta-in` / `4.9.0-amd64-ta-in-pallavineural`, `/stt/ta-IN` / `/tts/ta-IN`). Existing releases keep running; the change only matters on the next `helm upgrade`.
+- Releases installed with a mismatched image (STT tag on a TTS release, or the reverse) now fail on upgrade; fix the tag or the base file.
+
 ## [1.4.4] - 2026-10-16
 
 ### Added

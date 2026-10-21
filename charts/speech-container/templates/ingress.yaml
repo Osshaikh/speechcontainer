@@ -1,7 +1,7 @@
 {{- if .Values.ingress.enabled -}}
 {{- $svcName := include "speech-container.fullname" . -}}
 {{- $svcPort := .Values.service.port | int -}}
-{{- $path := .Values.ingress.path | required "ingress.path is required when ingress.enabled=true (e.g. /stt/en-US)" -}}
+{{- $path := .Values.ingress.path | required "ingress.path is required when ingress.enabled=true: the route path of this language, e.g. --set ingress.path=/stt/mr-IN (STT) or /tts/mr-IN (TTS)" -}}
 {{- $host := .Values.ingress.host | required "ingress.host is required when ingress.enabled=true (e.g. speech.contoso.com)" -}}
 apiVersion: networking.k8s.io/v1
 kind: Ingress

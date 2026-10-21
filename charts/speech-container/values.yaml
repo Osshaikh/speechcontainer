@@ -176,12 +176,12 @@ service:
 # ---- ingress -----------------------------------------------------------------
 # When enabled, each release publishes ONE Ingress rule on a shared hostname.
 # NGINX Ingress Controller automatically merges rules from different Ingress
-# objects that share the same `host`, so the 4 releases (stt-en, stt-hi,
-# tts-en, tts-hi) end up as one virtual site:
+# objects that share the same `host`, so the 4 releases (stt-hi, stt-mr,
+# tts-hi, tts-mr) end up as one virtual site:
 #
-#   wss://<host>/stt/en-US/speech/recognition/...   -> svc/stt-en
+#   wss://<host>/stt/mr-IN/speech/recognition/...   -> svc/stt-mr
 #   wss://<host>/stt/hi-IN/speech/recognition/...   -> svc/stt-hi
-#   http://<host>/tts/en-US/cognitiveservices/v1    -> svc/tts-en
+#   http://<host>/tts/mr-IN/cognitiveservices/v1    -> svc/tts-mr
 #   http://<host>/tts/hi-IN/cognitiveservices/v1    -> svc/tts-hi
 #
 # The path prefix (e.g. /stt/en-US) is stripped before forwarding so the

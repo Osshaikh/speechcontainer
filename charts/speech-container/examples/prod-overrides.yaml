@@ -5,8 +5,8 @@
 # tts-other (recommended for prod — Hindi and non-Hindi workloads isolated).
 # If you want to run everything on one pool instead, layer this file on top:
 #
-#   helm install stt-en osshaikh/speech-container \
-#     -f stt-en.yaml \
+#   helm install stt-hi speech-container/speech-container \
+#     -f stt-hi.yaml \
 #     -f prod-overrides.yaml
 #
 # This REPLACES the example's nodePool with a single shared "workload=speech"

@@ -1,0 +1,98 @@
+# =============================================================================
+#  stt-other.yaml: Speech-to-Text for any NON-HINDI language
+# -----------------------------------------------------------------------------
+#  Shared base for every non-Hindi STT release: resources, decoders, replicas,
+#  drain settings and the shared non-Hindi pool (stt-other). It sets NO
+#  language, so two values are REQUIRED at install time (the install fails
+#  with a clear error if they're missing):
+#    --set image.tag=<version>-amd64-<locale>     the language's STT image
+#    --set gatewayApi.path=/stt/<locale>          its route path (with a route)
+#
+#  One release per language (one Deployment, one image, one route), e.g. Marathi:
+#    helm upgrade --install stt-mr speech-container/speech-container -n speech \
+#      -f examples/stt-other.yaml -f examples/values-gateway-route.yaml \
+#      --set image.tag=5.3.0-amd64-mr-in --set gatewayApi.path=/stt/mr-IN \
+#      --set secretRef.enabled=true --set gatewayApi.hostname=speech.contoso.com
+#
+#  Tags (STT versions differ per locale; check new ones on MCR first):
+#    English  5.4.0-amd64-en-us  /stt/en-US    Marathi   5.3.0-amd64-mr-in  /stt/mr-IN
+#    Tamil    5.3.0-amd64-ta-in  /stt/ta-IN    Gujarati  5.3.0-amd64-gu-in  /stt/gu-IN
+#    Telugu   5.4.0-amd64-te-in  /stt/te-IN    Bengali   5.3.0-amd64-bn-in  /stt/bn-IN
+#  Hindi STT: use examples/stt-hi.yaml (dedicated pool) instead.
+# =============================================================================
+
+mode: stt
+
+image:
+  tag: ""          # REQUIRED: --set image.tag=<version>-amd64-<locale>
+
+# STT sizing per Microsoft Learn: 4 GB base + 4-8 GB for the speech model,
+# which is memory-mapped and should stay in memory.
+# Request = guaranteed scheduling floor.
+resources:
+  requests:
+    cpu: "4"
+    memory: "8Gi"
+  limits:
+    cpu: "8"
+    memory: "16Gi"
+
+# Decoders = concurrent sessions per pod (sets DECODER_MAX_COUNT; STT only).
+concurrency:
+  numberOfConcurrentRequest: 8
+
+replicaCount: 2
+
+# maxReplicas: keep it within what the node pool can actually schedule
+# (pool max nodes x pods per node), or the HPA plans pods that stay Pending.
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 75
+
+# Dedicated pools usually have no room for an extra surge pod, so replace one
+# pod at a time instead (one replica fewer during the rollout). With spare
+# capacity or the cluster autoscaler you can return to
+# maxSurge: 1 / maxUnavailable: 0.
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 0
+    maxUnavailable: 1
+
+# ---- Graceful drain for live calls -------------------------------------------
+# On scale-in, rollout or node upgrade the pod leaves the Service first, then
+# keeps serving open WebSocket sessions for preStopSleepSeconds before stopping.
+# Size it to your longest normal call. Must be < terminationGracePeriodSeconds.
+preStopSleepSeconds: 300
+terminationGracePeriodSeconds: 330
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+service:
+  type: ClusterIP
+  port: 5000
+
+# ---- Route -----------------------------------------------------------------
+# Path of this language on the shared Gateway hostname. REQUIRED with a route
+# (-f examples/values-gateway-route.yaml): --set gatewayApi.path=/stt/<locale>.
+# Clients then call https://<your hostname>/stt/<locale>/...
+gatewayApi:
+  path: ""
+
+# ---- Pod scheduling: shared non-Hindi STT node pool -------------------------
+# Every non-Hindi STT language (en-US, mr-IN, ta-IN, ...) shares one pool, prepared as:
+#   az aks nodepool add ... --name sttother \
+#     --node-taints workload=stt-other:NoSchedule \
+#     --labels workload=stt-other
+# The chart turns `nodePool` into a toleration for that taint plus node
+# affinity for that label (required here, see nodePoolAffinity below).
+# Different pool labels (for example agentpool=nonhindistt)? Pass
+# --set nodePoolKey=agentpool --set nodePool=nonhindistt.
+nodePool: stt-other
+# Never schedule outside the pool (pods wait as Pending if it's full, so enable
+# the cluster autoscaler on it). Use `preferred` to allow fallback to other nodes.
+nodePoolAffinity: required

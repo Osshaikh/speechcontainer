@@ -32,12 +32,18 @@ jobs:
       - name: helm template (every example, alone and with every overlay)
         run: |
           set -euo pipefail
-          for ex in stt-en stt-hi stt-ta tts-en tts-hi tts-ta; do
+          for ex in stt-hi stt-other tts-hi tts-other; do
+            # The non-Hindi base files set no language: pass one (Marathi here).
+            lang=()
+            case "$ex" in
+              stt-other) lang=(--set image.tag=5.3.0-amd64-mr-in --set gatewayApi.path=/stt/mr-IN) ;;
+              tts-other) lang=(--set image.tag=4.9.0-amd64-mr-in-aarohineural --set gatewayApi.path=/tts/mr-IN) ;;
+            esac
             for ov in "" values-gateway-route agc-overrides internal-lb prod-overrides; do
               args=(-f "$CHART/examples/$ex.yaml")
               [ -n "$ov" ] && args+=(-f "$CHART/examples/$ov.yaml")
               echo "::group::$ex ${ov:-(no overlay)}"
-              helm template test "$CHART" "${args[@]}" \
+              helm template test "$CHART" "${args[@]}" ${lang[@]+"${lang[@]}"} \
                 --set secretRef.enabled=true --set secretRef.name=test \
                 --set gatewayApi.hostname=speech.contoso.com > /dev/null
               echo "::endgroup::"
@@ -73,7 +79,7 @@ jobs:
             --set 'imagePullSecrets[0].name=acr' | grep -q 'name: acr'
           helm template t "$CHART" "${base[@]}" --set livenessProbe.type=httpGet | grep -q 'path: /status'
           # TTS must not get the STT-only DECODER_MAX_COUNT
-          ! helm template t "$CHART" -f "$CHART/examples/tts-en.yaml" "${base[@]}" | grep -q DECODER_MAX_COUNT
+          ! helm template t "$CHART" -f "$CHART/examples/tts-hi.yaml" "${base[@]}" | grep -q DECODER_MAX_COUNT
 
       - name: helm template (invalid values must fail)
         run: |
@@ -90,8 +96,17 @@ jobs:
           expect_fail --set secretProviderClass.enabled=true  # missing Key Vault name / tenant / client ID
           expect_fail --set gatewayApi.enabled=true --set gatewayApi.parentRef.name=gw \
             --set gatewayApi.path=/stt/en-US                   # no hostname
-          expect_fail -f "$CHART/examples/stt-en.yaml" -f "$CHART/examples/values-gateway-route.yaml"
-          expect_fail --set ingress.enabled=true --set ingress.path=/stt/en-US   # no ingress.host
+          expect_fail -f "$CHART/examples/stt-hi.yaml" -f "$CHART/examples/values-gateway-route.yaml"
+          expect_fail --set ingress.enabled=true --set ingress.path=/stt/hi-IN   # no ingress.host
+          # Non-Hindi base files: image.tag is required, must match the mode, and a route needs a path
+          expect_fail -f "$CHART/examples/stt-other.yaml"
+          expect_fail -f "$CHART/examples/tts-other.yaml"
+          expect_fail -f "$CHART/examples/stt-other.yaml" --set image.tag=4.9.0-amd64-mr-in-aarohineural
+          expect_fail -f "$CHART/examples/tts-other.yaml" --set image.tag=5.3.0-amd64-mr-in
+          expect_fail -f "$CHART/examples/stt-other.yaml" -f "$CHART/examples/values-gateway-route.yaml" \
+            --set image.tag=5.3.0-amd64-mr-in --set gatewayApi.hostname=speech.contoso.com
+          out=$(helm template t "$CHART" -f "$CHART/examples/stt-other.yaml" --set secretRef.enabled=true 2>&1 || true)
+          grep -q 'image.tag is required' <<<"$out" || { echo "::error::missing image.tag must say so"; exit 1; }
 
       - name: Gateway manifests match the route overlay
         run: |
@@ -125,8 +140,13 @@ jobs:
           stt=azure-cognitive-services/speechservices/speech-to-text
           tts=azure-cognitive-services/speechservices/neural-text-to-speech
           check "$stt" "$(yq '.image.tag' "$CHART/values.yaml")"
-          for f in "$CHART"/examples/stt-*.yaml; do check "$stt" "$(yq '.image.tag' "$f")"; done
-          for f in "$CHART"/examples/tts-*.yaml; do check "$tts" "$(yq '.image.tag' "$f")"; done
+          # stt-other.yaml / tts-other.yaml leave image.tag empty on purpose
+          for f in "$CHART"/examples/stt-*.yaml; do
+            t=$(yq '.image.tag' "$f"); if [ -n "$t" ]; then check "$stt" "$t"; fi
+          done
+          for f in "$CHART"/examples/tts-*.yaml; do
+            t=$(yq '.image.tag' "$f"); if [ -n "$t" ]; then check "$tts" "$t"; fi
+          done
           # Every full image tag written in the chart README must exist too.
           mapfile -t tags < <(grep -oE '[0-9]+\.[0-9]+\.[0-9]+-amd64-[a-z]{2}-[a-z]{2}(-[a-z]+neural)?' "$CHART/README.md" | sort -u)
           for t in "${tags[@]}"; do

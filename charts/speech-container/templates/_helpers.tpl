@@ -52,8 +52,29 @@ azure-cognitive-services/speechservices/neural-text-to-speech
 {{- end -}}
 {{- end -}}
 
+{{/*
+  Full image reference. image.tag is required (examples/stt-other.yaml and
+  tts-other.yaml leave it empty on purpose), and an MCR-style tag must match
+  the mode: TTS voice tags end in "neural", STT tags don't.
+*/}}
 {{- define "speech-container.image.full" -}}
-{{ .Values.image.registry }}/{{ include "speech-container.image.repository" . }}:{{ .Values.image.tag }}
+{{- $tag := .Values.image.tag -}}
+{{- if not $tag -}}
+{{- if eq .Values.mode "tts" -}}
+{{- fail "image.tag is required: pass this language's voice image, --set image.tag=<version>-amd64-<locale>-<voice>neural (e.g. 4.9.0-amd64-mr-in-aarohineural). Tags: https://mcr.microsoft.com/product/azure-cognitive-services/speechservices/neural-text-to-speech/tags" -}}
+{{- else -}}
+{{- fail "image.tag is required: pass this language's STT image, --set image.tag=<version>-amd64-<locale> (e.g. 5.3.0-amd64-mr-in). Tags: https://mcr.microsoft.com/product/azure-cognitive-services/speechservices/speech-to-text/tags" -}}
+{{- end -}}
+{{- end -}}
+{{- if regexMatch "^[0-9]+\\.[0-9]+\\.[0-9]+.*-amd64-" $tag -}}
+{{- $isVoice := contains "neural" (lower $tag) -}}
+{{- if and (eq .Values.mode "stt") $isVoice -}}
+{{- fail (printf "image.tag %q is a TTS voice image, but this release has mode: stt. Use an STT tag (<version>-amd64-<locale>, e.g. 5.3.0-amd64-mr-in), or install the voice with examples/tts-other.yaml" $tag) -}}
+{{- else if and (eq .Values.mode "tts") (not $isVoice) -}}
+{{- fail (printf "image.tag %q is an STT image, but this release has mode: tts. Use a voice tag (<version>-amd64-<locale>-<voice>neural, e.g. 4.9.0-amd64-mr-in-aarohineural), or install it with examples/stt-other.yaml" $tag) -}}
+{{- end -}}
+{{- end -}}
+{{ .Values.image.registry }}/{{ include "speech-container.image.repository" . }}:{{ $tag }}
 {{- end -}}
 
 {{/*

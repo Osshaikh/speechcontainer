@@ -4,7 +4,7 @@
 {{- if .Values.gatewayApi.enabled -}}
 {{- $svcName := include "speech-container.fullname" . -}}
 {{- $svcPort := .Values.service.port | int -}}
-{{- $path := .Values.gatewayApi.path | required "gatewayApi.path is required when gatewayApi.enabled=true (e.g. /stt/en-US)" -}}
+{{- $path := .Values.gatewayApi.path | required "gatewayApi.path is required when gatewayApi.enabled=true: the route path of this language, e.g. --set gatewayApi.path=/stt/mr-IN (STT) or /tts/mr-IN (TTS)" -}}
 {{- $parentName := .Values.gatewayApi.parentRef.name | required "gatewayApi.parentRef.name is required (the name of the existing parent Gateway resource)" -}}
 {{- $parentNs := default .Release.Namespace .Values.gatewayApi.parentRef.namespace -}}
 apiVersion: gateway.networking.k8s.io/v1

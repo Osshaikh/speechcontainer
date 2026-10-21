@@ -5,9 +5,9 @@
 #  an ApplicationLoadBalancer + Gateway on your AKS cluster. Layer on top of
 #  any stt-*.yaml / tts-*.yaml example (the example sets gatewayApi.path):
 #
-#    helm upgrade --install stt-en speech-container/speech-container -n speech \
-#      --version 1.4.4 \
-#      -f examples/stt-en.yaml \
+#    helm upgrade --install stt-hi speech-container/speech-container -n speech \
+#      --version 1.5.0 \
+#      -f examples/stt-hi.yaml \
 #      -f examples/agc-overrides.yaml \
 #      --set secretRef.enabled=true \
 #      --set gatewayApi.hostname=speech.contoso.com

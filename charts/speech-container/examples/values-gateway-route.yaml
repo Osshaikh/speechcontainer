@@ -3,12 +3,13 @@
 #  (Gateway API, gatewayClassName approuting-istio)
 # -----------------------------------------------------------------------------
 #  Recommended route on AKS. Layer it on top of any stt-*.yaml / tts-*.yaml
-#  example; the example already sets gatewayApi.path (/stt/<locale> or
-#  /tts/<locale>), so each release gets its own path on the shared hostname.
+#  example. stt-hi.yaml / tts-hi.yaml set gatewayApi.path; with
+#  stt-other.yaml / tts-other.yaml pass --set gatewayApi.path=/stt/<locale> or
+#  /tts/<locale>. Each release gets its own path on the shared hostname.
 #
-#    helm upgrade --install stt-en speech-container/speech-container -n speech \
-#      --version 1.4.4 \
-#      -f examples/stt-en.yaml \
+#    helm upgrade --install stt-hi speech-container/speech-container -n speech \
+#      --version 1.5.0 \
+#      -f examples/stt-hi.yaml \
 #      -f examples/values-gateway-route.yaml \
 #      --set secretRef.enabled=true \
 #      --set gatewayApi.hostname=speech.contoso.com     # REQUIRED
@@ -22,10 +23,10 @@
 #
 #  Clients call the path-routed URL with the Speech SDK `endpoint` parameter
 #  (the SDK `host` parameter does not accept a path):
-#    public Gateway    STT wss://speech.contoso.com/stt/en-US/speech/recognition/conversation/cognitiveservices/v1
-#                      TTS https://speech.contoso.com/tts/en-US/cognitiveservices/v1
-#    internal Gateway  STT ws://speech.contoso.com/stt/en-US/speech/recognition/conversation/cognitiveservices/v1
-#                      TTS http://speech.contoso.com/tts/en-US/cognitiveservices/v1
+#    public Gateway    STT wss://speech.contoso.com/stt/hi-IN/speech/recognition/conversation/cognitiveservices/v1
+#                      TTS https://speech.contoso.com/tts/hi-IN/cognitiveservices/v1
+#    internal Gateway  STT ws://speech.contoso.com/stt/hi-IN/speech/recognition/conversation/cognitiveservices/v1
+#                      TTS http://speech.contoso.com/tts/hi-IN/cognitiveservices/v1
 # =============================================================================
 
 ingress:
