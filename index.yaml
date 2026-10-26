@@ -10,6 +10,43 @@ entries:
           url: https://github.com/Osshaikh/speechcontainer/blob/main/charts/speech-container/README.md
     apiVersion: v2
     appVersion: 5.4.0
+    created: "2026-10-26T04:44:57.92576327Z"
+    description: 'Helm chart for deploying Azure AI Speech containers (Speech-to-Text
+      and Neural Text-to-Speech, connected mode) on Kubernetes, with a tested AKS
+      + Gateway API path. Fully parameterised CPU and memory (request + limit) per
+      container, aligned with Microsoft Learn host-resource recommendations. First-class
+      AKS guidance with platform-neutral defaults. '
+    digest: 3cab235e537a5fc73bd0cab983dfa16be5c601ebe1724bf0e2eb47b009d42539
+    home: https://github.com/Osshaikh/speechcontainer
+    keywords:
+    - azure
+    - speech
+    - stt
+    - tts
+    - text-to-speech
+    - speech-to-text
+    - cognitive-services
+    - aks
+    - kubernetes
+    maintainers:
+    - email: osshaikh@microsoft.com
+      name: Osama Shaikh
+    name: speech-container
+    sources:
+    - https://github.com/Osshaikh/speechcontainer
+    type: application
+    urls:
+    - https://github.com/Osshaikh/speechcontainer/releases/download/speech-container-1.5.1/speech-container-1.5.1.tgz
+    version: 1.5.1
+  - annotations:
+      artifacthub.io/license: MIT
+      artifacthub.io/links: |
+        - name: Source
+          url: https://github.com/Osshaikh/speechcontainer
+        - name: Documentation
+          url: https://github.com/Osshaikh/speechcontainer/blob/main/charts/speech-container/README.md
+    apiVersion: v2
+    appVersion: 5.4.0
     created: "2026-10-21T11:17:53.882152053Z"
     description: 'Helm chart for deploying Azure AI Speech containers (Speech-to-Text
       and Neural Text-to-Speech, connected mode) on Kubernetes, with a tested AKS
@@ -984,4 +1021,4 @@ entries:
     urls:
     - https://osshaikh.github.io/speechcontainer/speech-container-1.1.4.tgz
     version: 1.1.4
-generated: "2026-10-21T11:17:53.882225142Z"
+generated: "2026-10-26T04:44:57.926038979Z"
