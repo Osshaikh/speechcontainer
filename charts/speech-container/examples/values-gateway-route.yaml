@@ -8,7 +8,7 @@
 #  /tts/<locale>. Each release gets its own path on the shared hostname.
 #
 #    helm upgrade --install stt-hi speech-container/speech-container -n speech \
-#      --version 1.5.0 \
+#      --version 1.5.1 \
 #      -f examples/stt-hi.yaml \
 #      -f examples/values-gateway-route.yaml \
 #      --set secretRef.enabled=true \

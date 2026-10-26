@@ -17,7 +17,7 @@ The containers run in **connected mode**: audio and text are processed inside yo
 HOST=speech.contoso.com
 helm repo add speech-container https://osshaikh.github.io/speechcontainer/
 helm repo update
-helm pull speech-container/speech-container --version 1.5.0 --untar && cd speech-container
+helm pull speech-container/speech-container --version 1.5.1 --untar && cd speech-container
 
 kubectl create namespace speech
 kubectl create secret generic speech-credentials -n speech \
@@ -29,14 +29,14 @@ sed "s/speech.contoso.com/$HOST/" examples/gateway-public.yaml | kubectl apply -
 
 # Hindi STT and TTS
 for rel in stt-hi tts-hi; do
-  helm upgrade --install $rel speech-container/speech-container -n speech --version 1.5.0 \
+  helm upgrade --install $rel speech-container/speech-container -n speech --version 1.5.1 \
     -f examples/$rel.yaml -f examples/values-gateway-route.yaml \
     --set secretRef.enabled=true --set gatewayApi.hostname=$HOST \
     --wait --timeout 20m
 done
 
 # Any other language: shared base file + the language's image and path (both required)
-helm upgrade --install stt-mr speech-container/speech-container -n speech --version 1.5.0 \
+helm upgrade --install stt-mr speech-container/speech-container -n speech --version 1.5.1 \
   -f examples/stt-other.yaml -f examples/values-gateway-route.yaml \
   --set image.tag=5.3.0-amd64-mr-in --set gatewayApi.path=/stt/mr-IN \
   --set secretRef.enabled=true --set gatewayApi.hostname=$HOST \

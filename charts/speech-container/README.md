@@ -6,7 +6,7 @@ The containers run in **connected mode**: audio and text are processed inside yo
 
 - **Chart repo**: `https://osshaikh.github.io/speechcontainer/`
 - **Source**: `https://github.com/Osshaikh/speechcontainer`
-- **Chart version**: 1.5.0
+- **Chart version**: 1.5.1
 - **Images**: STT 5.4.0 (en-US, hi-IN; versions differ per locale, for example ta-IN is on 5.3.0) / TTS 4.9.0 (en-US AvaNeural, hi-IN SwaraNeural, ta-IN PallaviNeural)
 - **Requires**: Kubernetes ≥ 1.30, Helm ≥ 3.10 (Helm 4 supported), Azure CLI
 
@@ -175,7 +175,7 @@ Set these once, in the shell you deploy from; every command below uses them:
 ```bash
 NS=speech                          # namespace for the releases and the Gateway
 HOST=speech.contoso.com            # your hostname; must match the certificate
-CHART_VERSION=1.5.0
+CHART_VERSION=1.5.1
 SPEECH_NAME=your-speech-resource   # Azure AI Speech resource (Prerequisites §2)
 SPEECH_RG=your-resource-group
 
@@ -519,65 +519,11 @@ The SDK `host` parameter accepts only scheme, host and port, so it can't carry t
 
 ## Adding more languages
 
-Each extra language is one more release from the shared non-Hindi base file, `examples/stt-other.yaml` (STT) or `examples/tts-other.yaml` (TTS), with the language's image tag and route path. Both are required.
-
-### Image references
-
-| Resource | Link |
-|---|---|
-| **STT image tags** | https://mcr.microsoft.com/product/azure-cognitive-services/speechservices/speech-to-text/tags |
-| **TTS image tags** | https://mcr.microsoft.com/product/azure-cognitive-services/speechservices/neural-text-to-speech/tags |
-| **Speech container how-to** | https://learn.microsoft.com/azure/ai-services/speech-service/speech-container-howto |
-| **Supported locales and voices** | https://learn.microsoft.com/azure/ai-services/speech-service/language-support |
-| **Voice gallery (samples)** | https://speech.microsoft.com/portal/voicegallery |
-
-| Workload | Repository | Tag pattern |
-|---|---|---|
-| **STT** | `mcr.microsoft.com/azure-cognitive-services/speechservices/speech-to-text` | `<version>-amd64-<locale>`, e.g. `5.4.0-amd64-hi-in` |
-| **TTS** | `mcr.microsoft.com/azure-cognitive-services/speechservices/neural-text-to-speech` | `<version>-amd64-<locale>-<voice>neural`, e.g. `4.9.0-amd64-ta-in-pallavineural` |
-
-> ⚠️ **STT versions differ per locale.** Microsoft updates STT locales independently. As of chart 1.5.0:
->
-> | STT version | Locales |
-> |---|---|
-> | **5.4.0** | en-US, hi-IN, te-IN, ml-IN, pa-IN, ur-IN |
-> | **5.3.0** | ta-IN, mr-IN, bn-IN, gu-IN |
-> | none | kn-IN (no STT container image) |
->
-> TTS is more uniform: 4.9.0 covers en-US AvaNeural and the Indic voices used here (hi-IN, ta-IN, te-IN, mr-IN, bn-IN). Always check your exact tag with the helper below; copying a version from another language often ends in `ImagePullBackOff`.
-
-### Tag lookup helper
-
-MCR lists tags anonymously; no token or Docker needed.
-
-Both snippets list every tag for one locale (change `mr-in`). They query STT; for TTS replace `speech-to-text` with `neural-text-to-speech`.
-
-```bash
-# bash
-repo=azure-cognitive-services/speechservices/speech-to-text
-curl -s "https://mcr.microsoft.com/v2/$repo/tags/list?n=10000" \
-  | jq -r '.tags[]' | grep -i -- '-mr-in' | sort -V
-```
-
-```powershell
-# PowerShell
-$repo = 'azure-cognitive-services/speechservices/speech-to-text'
-(Invoke-RestMethod "https://mcr.microsoft.com/v2/$repo/tags/list?n=10000").tags |
-  Where-Object { $_ -like '*-mr-in*' } | Sort-Object
-```
+Hindi installs from its own files (`stt-hi.yaml`, `tts-hi.yaml`). **Every other language** (English, Marathi, Gujarati, ...) installs from the shared non-Hindi base file, `examples/stt-other.yaml` (STT) or `examples/tts-other.yaml` (TTS), plus two values you pass for that language: its image tag and its route path. One Helm release per language.
 
 ### Install a non-Hindi language
 
-| Language | STT `image.tag` | STT `gatewayApi.path` | TTS `image.tag` (voice) | TTS `gatewayApi.path` | SSML voice name |
-|---|---|---|---|---|---|
-| English | `5.4.0-amd64-en-us` | `/stt/en-US` | `4.9.0-amd64-en-us-avaneural` | `/tts/en-US` | `en-US-AvaNeural` |
-| Marathi | `5.3.0-amd64-mr-in` | `/stt/mr-IN` | `4.9.0-amd64-mr-in-aarohineural` | `/tts/mr-IN` | `mr-IN-AarohiNeural` |
-| Gujarati | `5.3.0-amd64-gu-in` | `/stt/gu-IN` | `4.9.0-amd64-gu-in-dhwanineural` | `/tts/gu-IN` | `gu-IN-DhwaniNeural` |
-| Tamil | `5.3.0-amd64-ta-in` | `/stt/ta-IN` | `4.9.0-amd64-ta-in-pallavineural` | `/tts/ta-IN` | `ta-IN-PallaviNeural` |
-| Telugu | `5.4.0-amd64-te-in` | `/stt/te-IN` | `4.9.0-amd64-te-in-shrutineural` | `/tts/te-IN` | `te-IN-ShrutiNeural` |
-| Bengali | `5.3.0-amd64-bn-in` | `/stt/bn-IN` | `4.9.0-amd64-bn-in-tanishaaneural` | `/tts/bn-IN` | `bn-IN-TanishaaNeural` |
-
-Marathi, for example:
+**Marathi STT and TTS:**
 
 ```bash
 helm upgrade --install stt-mr speech-container/speech-container -n $NS --version $CHART_VERSION \
@@ -599,11 +545,91 @@ helm upgrade --install tts-mr speech-container/speech-container -n $NS --version
   --wait --timeout 20m
 ```
 
-- **One release per language**, named after it (`stt-mr`, `tts-mr`): each release is one Deployment, one image and one route.
-- The pods run on the shared non-Hindi pools (`stt-other` / `tts-other`). Different pool labels? Add `--set nodePoolKey=<key> --set nodePool=<value>`, for example `--set nodePoolKey=agentpool --set nodePool=nonhindistt`.
+For another language, change only the release name, `image.tag` and `gatewayApi.path`.
+
+| Flag | What to put |
+|---|---|
+| release name (`stt-mr`, `tts-mr`) | Any unique name; `stt-<lang>` / `tts-<lang>` keeps things readable |
+| `-f examples/stt-other.yaml` / `tts-other.yaml` | STT or TTS for a non-Hindi language: resources, replicas, drain, and the shared `stt-other` / `tts-other` pool |
+| `--set image.tag=...` | **Required.** The language's image tag from MCR (see [Find the image for any other language](#find-the-image-for-any-other-language)) |
+| `--set gatewayApi.path=...` | **Required** with a route. `/stt/<locale>` or `/tts/<locale>`; clients call `http(s)://$HOST/<path>/...` |
+| `--set nodePoolKey=... --set nodePool=...` | Only if your non-Hindi pools use other labels, e.g. `--set nodePoolKey=agentpool --set nodePool=nonhindistt` (STT) / `nonhinditts` (TTS) |
+
+**Tags already verified on MCR** (as of chart 1.5.1):
+
+| Language | STT `image.tag` | STT `gatewayApi.path` | TTS `image.tag` (voice) | TTS `gatewayApi.path` | SSML voice name |
+|---|---|---|---|---|---|
+| English | `5.4.0-amd64-en-us` | `/stt/en-US` | `4.9.0-amd64-en-us-avaneural` | `/tts/en-US` | `en-US-AvaNeural` |
+| Marathi | `5.3.0-amd64-mr-in` | `/stt/mr-IN` | `4.9.0-amd64-mr-in-aarohineural` | `/tts/mr-IN` | `mr-IN-AarohiNeural` |
+| Gujarati | `5.3.0-amd64-gu-in` | `/stt/gu-IN` | `4.9.0-amd64-gu-in-dhwanineural` | `/tts/gu-IN` | `gu-IN-DhwaniNeural` |
+| Telugu | `5.4.0-amd64-te-in` | `/stt/te-IN` | `4.9.0-amd64-te-in-shrutineural` | `/tts/te-IN` | `te-IN-ShrutiNeural` |
+| Bengali | `5.3.0-amd64-bn-in` | `/stt/bn-IN` | `4.9.0-amd64-bn-in-tanishaaneural` | `/tts/bn-IN` | `bn-IN-TanishaaNeural` |
+
 - **What the chart checks:** a missing `image.tag` fails with `image.tag is required: ...`; a TTS voice tag on an STT release (or an STT tag on a TTS release) fails with `... is a TTS voice image, but this release has mode: stt ...`; a route without `gatewayApi.path` fails with `gatewayApi.path is required ...`.
 - **Another Hindi voice**: start from `tts-hi.yaml` (it targets the Hindi pool) and override the tag, for example `--set image.tag=4.9.0-amd64-hi-in-madhurneural`.
 - Many languages in one go: [Appendix D](#appendix-d--many-languages-at-once).
+
+### Find the image for any other language
+
+Every language and voice available as a Speech container is listed on **Microsoft Container Registry (MCR)**: that list is the source of truth (it's public; no login needed to browse or pull).
+
+| What | Link |
+|---|---|
+| **STT images: every locale and version** (search by locale, e.g. `ml-in`) | https://mcr.microsoft.com/product/azure-cognitive-services/speechservices/speech-to-text/tags |
+| **TTS images: every voice and version** (search by locale or voice, e.g. `ml-in`, `madhur`) | https://mcr.microsoft.com/product/azure-cognitive-services/speechservices/neural-text-to-speech/tags |
+| STT tag list as JSON (for scripts) | https://mcr.microsoft.com/v2/azure-cognitive-services/speechservices/speech-to-text/tags/list |
+| TTS tag list as JSON (for scripts) | https://mcr.microsoft.com/v2/azure-cognitive-services/speechservices/neural-text-to-speech/tags/list |
+
+**What's on MCR** (counted on 2026-10-26, release `amd64` tags only, any version):
+
+| | Total | Indian locales |
+|---|---|---|
+| **STT** | **135 locales** | 12: as-IN, bn-IN, en-IN, gu-IN, hi-IN, ml-IN, mr-IN, or-IN, pa-IN, ta-IN, te-IN, ur-IN |
+| **TTS** | **171 voices across 60 locales** | 13: the same 12 plus kn-IN (Kannada has TTS but no STT container) |
+
+**Image names**
+
+| Workload | Image repository (the chart sets it from `mode`) | Tag format (`--set image.tag=`) | Example |
+|---|---|---|---|
+| **STT** | `mcr.microsoft.com/azure-cognitive-services/speechservices/speech-to-text` | `<version>-amd64-<locale>` | `5.3.0-amd64-mr-in` |
+| **TTS** | `mcr.microsoft.com/azure-cognitive-services/speechservices/neural-text-to-speech` | `<version>-amd64-<locale>-<voice>neural` | `4.9.0-amd64-mr-in-aarohineural` |
+
+**From a tag on MCR to a Helm install**, for example Malayalam:
+
+1. Open the STT tags page and search `ml-in`. Pick the highest version without `-preview`, e.g. `5.4.0-amd64-ml-in`.
+2. Open the TTS tags page and search `ml-in`. Pick a voice on the newest version, e.g. `4.9.0-amd64-ml-in-sobhananeural`.
+3. Install with `--set image.tag=<that tag>` and `--set gatewayApi.path=/stt/ml-IN` (or `/tts/ml-IN`), using the commands above.
+4. **SSML voice name** for TTS requests: take `<locale>-<voice>neural` from the tag, upper-case the country and capitalize the voice. `4.9.0-amd64-ml-in-sobhananeural` → `ml-IN-SobhanaNeural`.
+
+Use the plain `amd64` tags. Skip tags ending in `-preview`, and variants such as `-ubuntu`, unless you need them.
+
+> ⚠️ **STT versions differ per locale.** Microsoft updates STT locales independently. As of chart 1.5.1:
+>
+> | STT version | Locales |
+> |---|---|
+> | **5.4.0** | en-US, hi-IN, te-IN, ml-IN, pa-IN, ur-IN |
+> | **5.3.0** | ta-IN, mr-IN, bn-IN, gu-IN |
+> | none | kn-IN (no STT container image) |
+>
+> TTS is more uniform: 4.9.0 covers en-US AvaNeural and the Indic voices used here (hi-IN, ta-IN, te-IN, mr-IN, bn-IN, gu-IN). Always check your exact tag; copying a version from another language often ends in `ImagePullBackOff`.
+
+### Tag lookup helper
+
+The same lookup from the command line (no token or Docker needed). Both snippets list every tag for one locale (change `mr-in`). They query STT; for TTS replace `speech-to-text` with `neural-text-to-speech`.
+
+```bash
+# bash
+repo=azure-cognitive-services/speechservices/speech-to-text
+curl -s "https://mcr.microsoft.com/v2/$repo/tags/list?n=10000" \
+  | jq -r '.tags[]' | grep -i -- '-mr-in' | sort -V
+```
+
+```powershell
+# PowerShell
+$repo = 'azure-cognitive-services/speechservices/speech-to-text'
+(Invoke-RestMethod "https://mcr.microsoft.com/v2/$repo/tags/list?n=10000").tags |
+  Where-Object { $_ -like '*-mr-in*' } | Sort-Object
+```
 
 > 📦 **Capacity:** every language adds 2 pods (the examples' minimum) to its pool. Plan **2 pods per 16-core node** for both STT and TTS: a TTS pod requests 6 cores, and an STT pod requests 4 but can burst to its 8-core limit (3 STT pods fit by request, but then can't all burst). Four non-Hindi TTS languages = 8 pods = at least 4 nodes in `tts-other`, or enable the cluster autoscaler; otherwise the extra pods stay `Pending` with `Insufficient cpu`. Each image also needs node disk (STT en-US ~6.4 GB, TTS 1–2 GB).
 
@@ -917,7 +943,7 @@ tts-bn 4.9.0-amd64-bn-in-tanishaaneural tts-other /tts/bn-IN
 EOF
 ```
 
-`${rel%%-*}-other.yaml` picks `stt-other.yaml` or `tts-other.yaml` as the base. Tags verified on MCR for chart 1.5.0; check new ones with the [tag lookup helper](#tag-lookup-helper). Size the pools first (see the capacity note in [Adding more languages](#adding-more-languages)).
+`${rel%%-*}-other.yaml` picks `stt-other.yaml` or `tts-other.yaml` as the base. Tags verified on MCR for chart 1.5.1; check new ones with the [tag lookup helper](#tag-lookup-helper). Size the pools first (see the capacity note in [Adding more languages](#adding-more-languages)).
 
 ---
 

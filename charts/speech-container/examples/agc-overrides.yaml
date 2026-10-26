@@ -6,7 +6,7 @@
 #  any stt-*.yaml / tts-*.yaml example (the example sets gatewayApi.path):
 #
 #    helm upgrade --install stt-hi speech-container/speech-container -n speech \
-#      --version 1.5.0 \
+#      --version 1.5.1 \
 #      -f examples/stt-hi.yaml \
 #      -f examples/agc-overrides.yaml \
 #      --set secretRef.enabled=true \

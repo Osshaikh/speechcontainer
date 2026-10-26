@@ -5,6 +5,14 @@ All notable changes to the `speech-container` Helm chart are documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.1] - 2026-10-26
+
+Documentation only; no template or values changes.
+
+### Changed
+- README "Adding more languages" reordered for non-Hindi languages: the install example comes first (Marathi STT/TTS commands, a table of what each flag means, and the tags already verified on MCR), followed by a new **"Find the image for any other language"** section.
+- "Find the image for any other language": links to the MCR tag pages for STT and TTS (browse and search by locale) and the JSON tag lists, which list every language available as a container; counts as of 2026-10-26 (STT 135 locales, TTS 171 voices across 60 locales, with the Indian locales); image repository and tag formats; a worked example (Malayalam) from an MCR tag to `--set image.tag` / `gatewayApi.path`; how to derive the SSML voice name from a TTS tag; which tags to skip (`-preview`, `-ubuntu`).
+
 ## [1.5.0] - 2026-10-21
 
 Hindi and non-Hindi languages now have separate example files, and a non-Hindi release must name its language explicitly.
